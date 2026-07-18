@@ -3,7 +3,7 @@
 // re-running this against an already-migrated DB is a safe no-op (no errors,
 // no duplicate tables/rows). This is wired into the Vercel build command
 // (see vercel.json) so it runs automatically on every deploy.
-import { migrate } from "drizzle-orm/neon-serverless/migrator";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { sql } from "drizzle-orm";
 import { db, closePool } from "./client.js";
 import path from "node:path";
