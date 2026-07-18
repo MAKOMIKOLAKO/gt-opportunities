@@ -1,5 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run migrate --workspace backend",
-  "outputDirectory": "frontend/public"
+  "outputDirectory": "frontend/public",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" }
+  ]
 }
