@@ -1,0 +1,26 @@
+name: Backfill search_blob
+
+# One-off, manually-triggered: recomputes search_blob/search_vector for any
+# opportunities row where it's still empty (see backend/src/db/backfill-search-blob.ts).
+# Safe to re-run — rows that already have a populated search_blob are skipped.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  backfill-search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run search_blob backfill
+        run: npm run backfill:search --workspace backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
