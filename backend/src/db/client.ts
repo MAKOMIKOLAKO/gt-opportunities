@@ -26,7 +26,24 @@ if (!DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: DATABASE_URL });
+// Bounded timeouts so a stalled connection/query fails fast with a real
+// error instead of hanging until the platform kills the whole function
+// (Vercel's function timeout is up to 300s — a bare `pg.Pool` has no
+// timeout of its own and will happily wait that entire duration in
+// silence). connectionTimeoutMillis bounds acquiring a connection from the
+// pool. statement_timeout can't be set via the `options` startup parameter
+// here — Neon's pooled connection string goes through PgBouncer, which
+// rejects arbitrary startup parameters ("unsupported startup parameter in
+// options"). Set it per-connection instead, after the handshake completes.
+export const pool = new Pool({
+  connectionString: DATABASE_URL,
+  connectionTimeoutMillis: 8_000,
+});
+pool.on("connect", (client) => {
+  client.query("SET statement_timeout = 10000").catch((err) => {
+    console.error("Failed to set statement_timeout on new connection:", err);
+  });
+});
 export const db = drizzle(pool, { schema });
 
 /** Closes the underlying connection pool. Only call this from short-lived
