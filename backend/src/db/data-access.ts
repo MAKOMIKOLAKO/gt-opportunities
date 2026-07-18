@@ -105,27 +105,50 @@ function tsQueryString(raw: string): string | null {
  * Postgres equivalent of SQLite's FTS5 index — see search_blob/search_vector
  * in schema.ts). Reaches name, description, majors, tag labels, and every
  * string value nested in `details`, not just description.
+ *
+ * Returns a match -> relevance rank map (via ts_rank) rather than a plain Set
+ * so callers can order results by how well they match instead of getting
+ * them back in whatever order the base query happened to return rows in
+ * (which in practice meant "all VIPs, then all clubs" — insertion order).
  */
-async function searchMatchingIds(query: string): Promise<Set<number>> {
+async function searchMatchingIds(query: string): Promise<Map<number, number>> {
   const tsQuery = tsQueryString(query);
   if (tsQuery) {
-    const rows = await db.execute<{ id: number }>(
-      sql`SELECT id FROM opportunities WHERE search_vector @@ to_tsquery('english', ${tsQuery})`
+    const rows = await db.execute<{ id: number; rank: number }>(
+      sql`SELECT id, ts_rank(search_vector, to_tsquery('english', ${tsQuery})) as rank
+          FROM opportunities WHERE search_vector @@ to_tsquery('english', ${tsQuery})`
     );
-    return new Set(rows.rows.map((r) => Number(r.id)));
+    return new Map(rows.rows.map((r) => [Number(r.id), Number(r.rank)]));
   }
   // No usable tsquery terms survived sanitization (e.g. punctuation-only
   // query) — fall back to a plain substring match so the endpoint still
-  // degrades gracefully instead of returning nothing.
+  // degrades gracefully instead of returning nothing. No rank signal here,
+  // so every match ties at 0 and falls back to the title sort below.
   const needle = query.toLowerCase();
   const rows = await db
     .select({ id: opportunities.id, name: opportunities.name, description: opportunities.description })
     .from(opportunities);
-  return new Set(
+  return new Map(
     rows
       .filter((r) => r.name.toLowerCase().includes(needle) || r.description.toLowerCase().includes(needle))
-      .map((r) => r.id)
+      .map((r) => [r.id, 0])
   );
+}
+
+// Shared ordering for both public and admin listings: when a search query is
+// present, best relevance match first (ties broken alphabetically); with no
+// query, plain alphabetical-by-title so results aren't just insertion order.
+function sortByRelevanceThenTitle<T extends { id: number; name: string }>(
+  rows: T[],
+  ranks?: Map<number, number>
+): T[] {
+  return [...rows].sort((a, b) => {
+    if (ranks) {
+      const rankDiff = (ranks.get(b.id) ?? 0) - (ranks.get(a.id) ?? 0);
+      if (rankDiff !== 0) return rankDiff;
+    }
+    return a.name.localeCompare(b.name);
+  });
 }
 
 export interface PublicFilters {
@@ -151,9 +174,10 @@ export async function getPublic(filters: PublicFilters = {}): Promise<Opportunit
     .from(opportunities)
     .where(and(...conditions));
 
+  let ranks: Map<number, number> | undefined;
   if (filters.search) {
-    const matchIds = await searchMatchingIds(filters.search);
-    rows = rows.filter((r) => matchIds.has(r.id));
+    ranks = await searchMatchingIds(filters.search);
+    rows = rows.filter((r) => ranks!.has(r.id));
   }
 
   if (filters.tagSlugs && filters.tagSlugs.length > 0) {
@@ -166,7 +190,7 @@ export async function getPublic(filters: PublicFilters = {}): Promise<Opportunit
     rows = rows.filter((r) => matchIds.has(r.id));
   }
 
-  return attachTags(rows);
+  return attachTags(sortByRelevanceThenTitle(rows, ranks));
 }
 
 export interface AdminFilters {
@@ -190,12 +214,13 @@ export async function getForAdmin(filters: AdminFilters = {}): Promise<Opportuni
     .from(opportunities)
     .where(conditions.length > 0 ? and(...conditions) : undefined);
 
+  let ranks: Map<number, number> | undefined;
   if (filters.search) {
-    const matchIds = await searchMatchingIds(filters.search);
-    rows = rows.filter((r) => matchIds.has(r.id));
+    ranks = await searchMatchingIds(filters.search);
+    rows = rows.filter((r) => ranks!.has(r.id));
   }
 
-  return attachTags(rows);
+  return attachTags(sortByRelevanceThenTitle(rows, ranks));
 }
 
 export async function getAllTags() {
