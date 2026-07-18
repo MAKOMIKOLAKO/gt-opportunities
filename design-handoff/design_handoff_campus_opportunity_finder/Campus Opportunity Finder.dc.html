@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; }
+  ::selection { background: #B3A369; color: #003057; }
+  input, select, textarea, button { font-family: inherit; }
+  input::placeholder, textarea::placeholder { color: #9aa0a3; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</helmet>
+
+<div style="min-height:100vh; background:#F9F6E5; color:#1a1d1e; display:flex; flex-direction:column">
+
+  <!-- Header -->
+  <header style="background:#003057; color:#fff; position:sticky; top:0; z-index:20; box-shadow:0 1px 0 rgba(0,0,0,0.08)">
+    <div style="max-width:1280px; margin:0 auto; padding:16px 32px; display:flex; align-items:center; gap:28px">
+      <div onClick="{{ goHome }}" style="display:flex; align-items:center; gap:10px; cursor:pointer; flex-shrink:0">
+        <div style="width:34px; height:34px; border-radius:6px; background:#B3A369; display:flex; align-items:center; justify-content:center; font-weight:800; color:#003057; font-size:16px">GT</div>
+        <div style="line-height:1.15">
+          <div style="font-weight:700; font-size:16px; letter-spacing:0.2px">Opportunity Finder</div>
+          <div style="font-size:11px; color:#A4D2E; opacity:0.75; letter-spacing:0.3px">VIP · Labs · Student Orgs</div>
+        </div>
+      </div>
+      <nav style="display:flex; gap:4px; margin-left:8px">
+        <button onClick="{{ goHome }}" style="background:{{ navBg.directory }}; border:none; color:#fff; padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer">Directory</button>
+        <button onClick="{{ goSubmit }}" style="background:{{ navBg.submit }}; border:none; color:#fff; padding:9px 16px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer">Submit an Org</button>
+      </nav>
+      <div style="flex:1"></div>
+      <div style="font-size:12px; color:rgba(255,255,255,0.6); font-weight:500">Georgia Institute of Technology</div>
+    </div>
+  </header>
+
+  <!-- DIRECTORY VIEW -->
+  <sc-if value="{{ isDirectory }}" hint-placeholder-val="{{ true }}">
+    <main style="max-width:1280px; margin:0 auto; padding:32px; width:100%; flex:1; animation:fadeIn 0.25s ease">
+
+      <div style="margin-bottom:24px">
+        <h1 style="font-size:30px; font-weight:800; margin:0 0 6px; color:#003057; letter-spacing:-0.5px">Find your next project</h1>
+        <p style="margin:0; color:#54585A; font-size:15px; max-width:640px">Search VIP teams, research labs, and technical student organizations in one place — no more digging through CampusGroups.</p>
+      </div>
+
+      <!-- Search + view toggle -->
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap">
+        <div style="flex:1; min-width:260px; position:relative">
+          <input value="{{ query }}" onChange="{{ onQueryChange }}" placeholder="Search by name, keyword, skill (e.g. &quot;robotics&quot;, &quot;Python&quot;, &quot;VIP-Solar&quot;)" style="width:100%; padding:12px 16px 12px 40px; border-radius:10px; border:1.5px solid #D6DBD4; font-size:14px; background:#fff; color:#1a1d1e; outline:none"/>
+          <div style="position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#54585A; font-size:14px">⌕</div>
+        </div>
+        <div style="display:flex; background:#fff; border:1.5px solid #D6DBD4; border-radius:10px; padding:3px; gap:2px">
+          <button onClick="{{ setViewGrid }}" style="border:none; background:{{ viewToggleBg.grid }}; color:{{ viewToggleColor.grid }}; padding:8px 14px; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer">Grid</button>
+          <button onClick="{{ setViewList }}" style="border:none; background:{{ viewToggleBg.list }}; color:{{ viewToggleColor.list }}; padding:8px 14px; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer">List</button>
+        </div>
+      </div>
+
+      <!-- Filter row -->
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+        <span style="font-size:12px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.4px; margin-right:2px">Type</span>
+        <sc-for list="{{ typeFilters }}" as="t" hint-placeholder-count="3">
+          <button onClick="{{ t.onClick }}" style="border:1.5px solid {{ t.border }}; background:{{ t.bg }}; color:{{ t.color }}; padding:6px 13px; border-radius:999px; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px">
+            <span style="width:8px; height:8px; border-radius:2px; background:{{ t.dot }}"></span>{{ t.label }}
+          </button>
+        </sc-for>
+        <div style="width:1px; height:22px; background:#D6DBD4; margin:0 6px"></div>
+        <span style="font-size:12px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.4px; margin-right:2px">Discipline</span>
+        <select value="{{ discipline }}" onChange="{{ onDisciplineChange }}" style="border:1.5px solid #D6DBD4; background:#fff; color:#1a1d1e; padding:7px 12px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer">
+          <sc-for list="{{ disciplineOptions }}" as="d" hint-placeholder-count="6">
+            <option value="{{ d }}">{{ d }}</option>
+          </sc-for>
+        </select>
+        <sc-if value="{{ hasActiveFilters }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ clearFilters }}" style="border:none; background:none; color:#003057; font-size:13px; font-weight:600; cursor:pointer; text-decoration:underline; padding:4px 2px">Clear filters</button>
+        </sc-if>
+      </div>
+
+      <div style="font-size:13px; color:#54585A; margin:14px 0 18px; font-weight:500">{{ resultCountLabel }}</div>
+
+      <!-- Grid view -->
+      <sc-if value="{{ isGridView }}" hint-placeholder-val="{{ true }}">
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:16px">
+          <sc-for list="{{ filteredOrgs }}" as="org" hint-placeholder-count="6">
+            <div onClick="{{ org.onClick }}" style="background:#fff; border:1.5px solid #D6DBD4; border-radius:14px; padding:20px; cursor:pointer; display:flex; flex-direction:column; gap:10px; transition:transform 0.15s, box-shadow 0.15s" style-hover="box-shadow:0 8px 24px rgba(0,48,87,0.1); transform:translateY(-2px); border-color:#B3A369">
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px">
+                <div style="width:44px; height:44px; border-radius:10px; background:{{ org.iconBg }}; display:flex; align-items:center; justify-content:center; font-weight:800; color:#fff; font-size:15px; flex-shrink:0">{{ org.initials }}</div>
+                <span style="font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:{{ org.statusBg }}; color:{{ org.statusColor }}; white-space:nowrap">{{ org.status }}</span>
+              </div>
+              <div>
+                <div style="font-size:16px; font-weight:700; color:#003057; line-height:1.3; margin-bottom:3px">{{ org.name }}</div>
+                <div style="font-size:12.5px; color:#54585A; font-weight:500">{{ org.typeLabel }} · {{ org.discipline }}</div>
+              </div>
+              <div style="font-size:13px; color:#3a3f41; line-height:1.5; flex:1">{{ org.blurb }}</div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:2px">
+                <sc-for list="{{ org.tags }}" as="tag" hint-placeholder-count="3">
+                  <span style="font-size:11px; font-weight:600; color:#54585A; background:#F9F6E5; border:1px solid #D6DBD4; padding:3px 9px; border-radius:6px">{{ tag }}</span>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- List view -->
+      <sc-if value="{{ isListView }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#fff; border:1.5px solid #D6DBD4; border-radius:12px; overflow:hidden">
+          <div style="display:grid; grid-template-columns:2.2fr 1fr 1fr 1fr 0.8fr; gap:12px; padding:11px 20px; background:#F9F6E5; border-bottom:1.5px solid #D6DBD4; font-size:11.5px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px">
+            <div>Name</div><div>Type</div><div>Discipline</div><div>Commitment</div><div>Status</div>
+          </div>
+          <sc-for list="{{ filteredOrgs }}" as="org" hint-placeholder-count="6">
+            <div onClick="{{ org.onClick }}" style="display:grid; grid-template-columns:2.2fr 1fr 1fr 1fr 0.8fr; gap:12px; padding:13px 20px; border-bottom:1px solid #EFF1EE; cursor:pointer; align-items:center" style-hover="background:#F9F6E5">
+              <div style="display:flex; align-items:center; gap:10px; min-width:0">
+                <span style="width:8px; height:8px; border-radius:2px; background:{{ org.iconBg }}; flex-shrink:0"></span>
+                <span style="font-size:14px; font-weight:700; color:#003057; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ org.name }}</span>
+              </div>
+              <div style="font-size:13px; color:#3a3f41; font-weight:500">{{ org.typeLabel }}</div>
+              <div style="font-size:13px; color:#3a3f41">{{ org.discipline }}</div>
+              <div style="font-size:13px; color:#3a3f41">{{ org.commitment }}</div>
+              <div><span style="font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:{{ org.statusBg }}; color:{{ org.statusColor }}">{{ org.status }}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ noResults }}" hint-placeholder-val="{{ false }}">
+        <div style="text-align:center; padding:60px 20px; color:#54585A">
+          <div style="font-size:15px; font-weight:600; margin-bottom:6px; color:#003057">No matches found</div>
+          <div style="font-size:13.5px">Try a different keyword or clear your filters — or submit the org yourself.</div>
+        </div>
+      </sc-if>
+    </main>
+  </sc-if>
+
+  <!-- DETAIL VIEW -->
+  <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width:900px; margin:0 auto; padding:32px; width:100%; flex:1; animation:fadeIn 0.25s ease">
+      <button onClick="{{ goHome }}" style="border:none; background:none; color:#003057; font-size:13.5px; font-weight:600; cursor:pointer; margin-bottom:20px; display:flex; align-items:center; gap:6px; padding:0">← Back to directory</button>
+
+      <div style="background:#fff; border:1.5px solid #D6DBD4; border-radius:16px; padding:32px">
+        <div style="display:flex; align-items:flex-start; gap:16px; margin-bottom:8px">
+          <div style="width:56px; height:56px; border-radius:12px; background:{{ selectedOrg.iconBg }}; display:flex; align-items:center; justify-content:center; font-weight:800; color:#fff; font-size:19px; flex-shrink:0">{{ selectedOrg.initials }}</div>
+          <div style="flex:1">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+              <h1 style="font-size:24px; font-weight:800; color:#003057; margin:0; letter-spacing:-0.3px">{{ selectedOrg.name }}</h1>
+              <span style="font-size:11.5px; font-weight:700; padding:4px 10px; border-radius:999px; background:{{ selectedOrg.statusBg }}; color:{{ selectedOrg.statusColor }}">{{ selectedOrg.status }}</span>
+            </div>
+            <div style="font-size:13.5px; color:#54585A; font-weight:500; margin-top:4px">{{ selectedOrg.typeLabel }} · {{ selectedOrg.discipline }}</div>
+          </div>
+        </div>
+
+        <p style="font-size:15px; line-height:1.65; color:#2a2d2e; margin:20px 0">{{ selectedOrg.description }}</p>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin:24px 0; padding:20px; background:#F9F6E5; border-radius:12px">
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px">Commitment</div>
+            <div style="font-size:14px; font-weight:600; color:#1a1d1e">{{ selectedOrg.commitment }}</div>
+          </div>
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px">Credit / Pay</div>
+            <div style="font-size:14px; font-weight:600; color:#1a1d1e">{{ selectedOrg.creditPay }}</div>
+          </div>
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px">Faculty Lead</div>
+            <div style="font-size:14px; font-weight:600; color:#1a1d1e">{{ selectedOrg.lead }}</div>
+          </div>
+          <div>
+            <div style="font-size:11px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px">Meets</div>
+            <div style="font-size:14px; font-weight:600; color:#1a1d1e">{{ selectedOrg.meets }}</div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:24px">
+          <div style="font-size:11px; font-weight:700; color:#54585A; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:8px">Skills & Keywords</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap">
+            <sc-for list="{{ selectedOrg.tags }}" as="tag" hint-placeholder-count="4">
+              <span style="font-size:12px; font-weight:600; color:#003057; background:#F9F6E5; border:1px solid #D6DBD4; padding:5px 11px; border-radius:7px">{{ tag }}</span>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:12px; padding-top:8px; border-top:1px solid #EFF1EE">
+          <a href="{{ selectedOrg.applyUrl }}" style="background:#003057; color:#fff; padding:12px 22px; border-radius:9px; font-size:14px; font-weight:700; text-decoration:none; display:inline-flex; align-items:center">How to Apply</a>
+          <div style="display:flex; align-items:center; font-size:13px; color:#54585A">Contact: {{ selectedOrg.contact }}</div>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- SUBMIT VIEW -->
+  <sc-if value="{{ isSubmit }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width:720px; margin:0 auto; padding:32px; width:100%; flex:1; animation:fadeIn 0.25s ease">
+      <h1 style="font-size:26px; font-weight:800; color:#003057; margin:0 0 6px; letter-spacing:-0.4px">Submit an organization</h1>
+      <p style="font-size:14.5px; color:#54585A; margin:0 0 24px; max-width:560px">Know a VIP team, lab, or technical org that's missing? Submissions are reviewed by student moderators before appearing in the directory.</p>
+
+      <sc-if value="{{ submitted }}" hint-placeholder-val="{{ false }}">
+        <div style="background:#fff; border:1.5px solid #D6DBD4; border-radius:14px; padding:40px; text-align:center">
+          <div style="width:52px; height:52px; border-radius:50%; background:#B3A369; color:#003057; font-weight:800; font-size:22px; display:flex; align-items:center; justify-content:center; margin:0 auto 16px">✓</div>
+          <div style="font-size:17px; font-weight:700; color:#003057; margin-bottom:6px">Thanks — submission received</div>
+          <div style="font-size:13.5px; color:#54585A; margin-bottom:20px">A moderator will review "{{ formName }}" before it goes live.</div>
+          <button onClick="{{ resetForm }}" style="border:1.5px solid #003057; background:none; color:#003057; padding:10px 20px; border-radius:9px; font-size:13.5px; font-weight:700; cursor:pointer">Submit another</button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showForm }}" hint-placeholder-val="{{ true }}">
+        <form onSubmit="{{ onSubmit }}" style="background:#fff; border:1.5px solid #D6DBD4; border-radius:14px; padding:28px; display:flex; flex-direction:column; gap:18px">
+          <div>
+            <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Organization name *</label>
+            <input value="{{ formName }}" onChange="{{ onFormNameChange }}" required="{{ true }}" placeholder="e.g. VIP-Autonomous Racing" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px"/>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+            <div>
+              <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Type *</label>
+              <select value="{{ formType }}" onChange="{{ onFormTypeChange }}" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px; background:#fff">
+                <option value="">Select type</option>
+                <option value="VIP Team">VIP Team</option>
+                <option value="Research Lab">Research Lab</option>
+                <option value="Student Org">Student Org</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Discipline / College</label>
+              <select value="{{ formDiscipline }}" onChange="{{ onFormDisciplineChange }}" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px; background:#fff">
+                <sc-for list="{{ disciplineOptionsNoAll }}" as="d" hint-placeholder-count="6">
+                  <option value="{{ d }}">{{ d }}</option>
+                </sc-for>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Short description *</label>
+            <textarea value="{{ formDesc }}" onChange="{{ onFormDescChange }}" required="{{ true }}" rows="4" placeholder="What does this org do? Who should join?" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px; resize:vertical"></textarea>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+            <div>
+              <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Skills / keywords</label>
+              <input value="{{ formTags }}" onChange="{{ onFormTagsChange }}" placeholder="comma separated, e.g. Python, CAD" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px"/>
+            </div>
+            <div>
+              <label style="display:block; font-size:12.5px; font-weight:700; color:#003057; margin-bottom:6px">Your GT email *</label>
+              <input value="{{ formEmail }}" onChange="{{ onFormEmailChange }}" required="{{ true }}" placeholder="you@gatech.edu" style="width:100%; padding:11px 14px; border-radius:9px; border:1.5px solid #D6DBD4; font-size:14px"/>
+            </div>
+          </div>
+          <div style="background:#F9F6E5; border:1px solid #D6DBD4; border-radius:9px; padding:12px 14px; font-size:12.5px; color:#54585A; display:flex; gap:8px">
+            <span>ℹ</span><span>Submissions enter a review queue and are checked for accuracy before publishing — expect 3–5 days.</span>
+          </div>
+          <button type="submit" style="background:#003057; color:#fff; border:none; padding:13px; border-radius:9px; font-size:14.5px; font-weight:700; cursor:pointer">Submit for review</button>
+        </form>
+      </sc-if>
+    </main>
+  </sc-if>
+
+  <footer style="border-top:1px solid #D6DBD4; padding:20px 32px; text-align:center; font-size:12px; color:#54585A">
+    Built by students, for students — not an official Georgia Tech resource.
+  </footer>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const ORGS = [
+  { id:1, name:'VIP: Autonomous Racing', type:'VIP', typeLabel:'VIP Team', discipline:'ECE', initials:'AR', iconBg:'#003057', status:'Open', commitment:'6-9 hrs/wk', creditPay:'Credit (VIP 4703)', lead:'Dr. Panagiotis Tsiotras', meets:'Tue/Thu 5-7pm', contact:'ar-vip@gatech.edu', applyUrl:'#',
+    blurb:'Design and race autonomous scale vehicles; controls, perception, and embedded systems.', description:'The Autonomous Racing VIP team builds full-stack autonomous racing vehicles from the ground up, covering perception, planning, controls, and embedded systems integration. Students work across multi-semester teams competing at national autonomous racing events.', tags:['C++','ROS','Controls','Computer Vision'] },
+  { id:2, name:'Human-Automation Systems Lab', type:'Lab', typeLabel:'Research Lab', discipline:'ISyE', initials:'HA', iconBg:'#5F249F', status:'Rolling', commitment:'10+ hrs/wk', creditPay:'Paid (hourly)', lead:'Dr. Karen Feigh', meets:'Flexible', contact:'has-lab@gatech.edu', applyUrl:'#',
+    blurb:'Human factors research on cockpit automation and decision support systems.', description:'HAS Lab studies how humans interact with complex automated systems, from aircraft cockpits to autonomous vehicles. Undergraduate researchers assist with experiment design, data collection, and human-subjects studies.', tags:['Human Factors','MATLAB','Research Design'] },
+  { id:3, name:'RoboJackets', type:'Org', typeLabel:'Student Org', discipline:'Multidisciplinary', initials:'RJ', iconBg:'#008C95', status:'Open', commitment:'8-12 hrs/wk', creditPay:'Volunteer', lead:'Student-run', meets:'Weeknights', contact:'robojackets@gatech.edu', applyUrl:'#',
+    blurb:'Competitive robotics club fielding teams in RoboCup, RoboRacing, and combat robotics.', description:"RoboJackets is Georgia Tech's largest robotics organization, running multiple competitive sub-teams. Members gain hands-on experience in mechanical design, electrical systems, and software across a full build season.", tags:['Robotics','SolidWorks','Firmware'] },
+  { id:4, name:'VIP: Grid Resilience & Energy', type:'VIP', typeLabel:'VIP Team', discipline:'ECE', initials:'GR', iconBg:'#003057', status:'Closed', commitment:'6 hrs/wk', creditPay:'Credit (VIP 4704)', lead:'Dr. Maryam Saeedifard', meets:'Wed 3-5pm', contact:'grid-vip@gatech.edu', applyUrl:'#',
+    blurb:'Modeling and hardware for resilient microgrids and renewable integration.', description:'Students design control strategies and hardware prototypes for resilient microgrids, focusing on renewable energy integration and grid-scale fault recovery. Closed for Fall; reopens each spring.', tags:['Power Systems','MATLAB','Simulink'] },
+  { id:5, name:'Wireless Systems Lab', type:'Lab', typeLabel:'Research Lab', discipline:'ECE', initials:'WS', iconBg:'#5F249F', status:'Rolling', commitment:'8-10 hrs/wk', creditPay:'Paid + Credit options', lead:'Dr. Raghupathy Sivakumar', meets:'Flexible', contact:'gnan@ece.gatech.edu', applyUrl:'#',
+    blurb:'Next-gen wireless protocols, 5G testbeds, and mobile systems research.', description:'GNAN Research Group builds and evaluates next-generation wireless networking protocols and mobile systems, with active testbeds for 5G and beyond. Undergrads contribute to systems implementation and measurement studies.', tags:['Networking','Linux','Python'] },
+  { id:6, name:'Machine Learning @ Georgia Tech', type:'Org', typeLabel:'Student Org', discipline:'CS', initials:'ML', iconBg:'#008C95', status:'Open', commitment:'4-6 hrs/wk', creditPay:'Volunteer', lead:'Student-run', meets:'Weekly workshops', contact:'mlatgt@gatech.edu', applyUrl:'#',
+    blurb:'Applied ML projects, paper reading groups, and beginner-friendly workshops.', description:'MLatGT runs project teams and reading groups covering applied machine learning, from computer vision to NLP. Open to all skill levels with mentorship structured for newcomers.', tags:['PyTorch','Python','Deep Learning'] },
+  { id:7, name:'VIP: Bio-Inspired Robotics', type:'VIP', typeLabel:'VIP Team', discipline:'ME', initials:'BR', iconBg:'#003057', status:'Open', commitment:'6-9 hrs/wk', creditPay:'Credit (VIP 4702)', lead:'Dr. Jun Ueda', meets:'Mon/Wed 4-6pm', contact:'bir-vip@gatech.edu', applyUrl:'#',
+    blurb:'Soft robotics and biomechanics-inspired actuator design.', description:'This VIP team develops soft-bodied and bio-inspired robotic mechanisms, drawing on biomechanics research to design novel actuators and locomotion strategies.', tags:['CAD','Mechatronics','3D Printing'] },
+  { id:8, name:'Cybersecurity Club', type:'Org', typeLabel:'Student Org', discipline:'CS', initials:'CS', iconBg:'#008C95', status:'Open', commitment:'3-5 hrs/wk', creditPay:'Volunteer', lead:'Student-run', meets:'Thu 6pm', contact:'cyber@gatech.edu', applyUrl:'#',
+    blurb:'CTF competitions, security research, and industry speaker series.', description:'Georgia Tech Cybersecurity Club trains members for CTF competitions and covers offensive/defensive security topics through workshops and guest talks from industry practitioners.', tags:['CTF','Security','Linux'] },
+  { id:9, name:'Computational NeuroEngineering Lab', type:'Lab', typeLabel:'Research Lab', discipline:'BME', initials:'CN', iconBg:'#5F249F', status:'Rolling', commitment:'10+ hrs/wk', creditPay:'Paid (hourly)', lead:'Dr. Chethan Pandarinath', meets:'Flexible', contact:'cn-lab@bme.gatech.edu', applyUrl:'#',
+    blurb:'Neural data analysis and brain-computer interface algorithms.', description:'CNEL develops machine learning methods for analyzing neural population activity and building brain-computer interfaces, in close collaboration with clinical partners.', tags:['Python','Signal Processing','ML'] },
+  { id:10, name:'VIP: Sustainable Construction Materials', type:'VIP', typeLabel:'VIP Team', discipline:'CEE', initials:'SC', iconBg:'#003057', status:'Open', commitment:'6 hrs/wk', creditPay:'Credit (VIP 4701)', lead:'Dr. Kimberly Kurtis', meets:'Fri 1-3pm', contact:'scm-vip@gatech.edu', applyUrl:'#',
+    blurb:'Low-carbon concrete formulations and lifecycle testing.', description:'Students formulate and test low-carbon concrete alternatives, running lab experiments on strength, durability, and lifecycle emissions to inform sustainable construction practice.', tags:['Materials Science','Lab Testing'] },
+  { id:11, name:'Design for America', type:'Org', typeLabel:'Student Org', discipline:'Multidisciplinary', initials:'DA', iconBg:'#008C95', status:'Open', commitment:'4-5 hrs/wk', creditPay:'Volunteer', lead:'Student-run', meets:'Tue 7pm', contact:'dfa@gatech.edu', applyUrl:'#',
+    blurb:'Human-centered design studio tackling local community challenges.', description:'DFA runs semester-long design studios applying human-centered design methods to real community partner challenges, from healthcare access to campus sustainability.', tags:['UX Research','Prototyping','Figma'] },
+  { id:12, name:'Systems Realization Lab', type:'Lab', typeLabel:'Research Lab', discipline:'ME', initials:'SR', iconBg:'#5F249F', status:'Closed', commitment:'10 hrs/wk', creditPay:'Paid + Credit options', lead:'Dr. Christopher Paredis', meets:'Flexible', contact:'srl@me.gatech.edu', applyUrl:'#',
+    blurb:'Model-based systems engineering for complex product design.', description:'SRL researches model-based design methodologies for complex engineered systems, applying formal methods to early-stage product architecture decisions. Not currently accepting new undergrads.', tags:['MBSE','Simulation'] },
+];
+
+const DISCIPLINES = ['All Disciplines','CS','ECE','ME','ISyE','BME','CEE','Multidisciplinary'];
+
+function statusColors(status) {
+  if (status === 'Open') return { bg:'#EAF6E9', color:'#2f7a3a' };
+  if (status === 'Rolling') return { bg:'#FFF3D6', color:'#8a6d00' };
+  return { bg:'#F1F1F1', color:'#6b6f71' };
+}
+
+class Component extends DCLogic {
+  state = {
+    view: 'directory', // directory | detail | submit
+    layout: 'grid',
+    query: '',
+    typeFilter: 'All',
+    discipline: 'All Disciplines',
+    selectedId: null,
+    formName: '', formType: '', formDiscipline: '', formDesc: '', formTags: '', formEmail: '',
+    submitted: false,
+  };
+
+  goHome = () => this.setState({ view: 'directory' });
+  goSubmit = () => this.setState({ view: 'submit' });
+  setViewGrid = () => this.setState({ layout: 'grid' });
+  setViewList = () => this.setState({ layout: 'list' });
+  onQueryChange = (e) => this.setState({ query: e.target.value });
+  onDisciplineChange = (e) => this.setState({ discipline: e.target.value });
+  clearFilters = () => this.setState({ query: '', typeFilter: 'All', discipline: 'All Disciplines' });
+  setTypeFilter = (t) => this.setState({ typeFilter: t });
+
+  onFormNameChange = (e) => this.setState({ formName: e.target.value });
+  onFormTypeChange = (e) => this.setState({ formType: e.target.value });
+  onFormDisciplineChange = (e) => this.setState({ formDiscipline: e.target.value });
+  onFormDescChange = (e) => this.setState({ formDesc: e.target.value });
+  onFormTagsChange = (e) => this.setState({ formTags: e.target.value });
+  onFormEmailChange = (e) => this.setState({ formEmail: e.target.value });
+  onSubmit = (e) => { e.preventDefault(); this.setState({ submitted: true }); };
+  resetForm = () => this.setState({ formName:'', formType:'', formDiscipline:'', formDesc:'', formTags:'', formEmail:'', submitted:false });
+
+  getFiltered() {
+    const { query, typeFilter, discipline } = this.state;
+    const q = query.trim().toLowerCase();
+    return ORGS.filter(o => {
+      if (typeFilter !== 'All' && o.type !== typeFilter) return false;
+      if (discipline !== 'All Disciplines' && o.discipline !== discipline) return false;
+      if (q) {
+        const hay = (o.name + ' ' + o.blurb + ' ' + o.tags.join(' ')).toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  renderVals() {
+    const s = this.state;
+    const filtered = this.getFiltered().map(o => {
+      const sc = statusColors(o.status);
+      return { ...o, statusBg: sc.bg, statusColor: sc.color, onClick: () => this.setState({ view:'detail', selectedId: o.id }) };
+    });
+
+    const types = [
+      { key:'All', label:'All' },
+      { key:'VIP', label:'VIP Teams' },
+      { key:'Lab', label:'Research Labs' },
+      { key:'Org', label:'Student Orgs' },
+    ];
+    const typeDots = { All:'#54585A', VIP:'#003057', Lab:'#5F249F', Org:'#008C95' };
+    const typeFilters = types.map(t => {
+      const active = s.typeFilter === t.key;
+      return {
+        label: t.label,
+        dot: typeDots[t.key],
+        onClick: () => this.setTypeFilter(t.key),
+        bg: active ? '#003057' : '#fff',
+        color: active ? '#fff' : '#1a1d1e',
+        border: active ? '#003057' : '#D6DBD4',
+      };
+    });
+
+    const selected = ORGS.find(o => o.id === s.selectedId) || ORGS[0];
+    const selSc = statusColors(selected.status);
+
+    return {
+      isDirectory: s.view === 'directory',
+      isDetail: s.view === 'detail',
+      isSubmit: s.view === 'submit',
+      goHome: this.goHome, goSubmit: this.goSubmit,
+      navBg: { directory: s.view==='directory' ? 'rgba(255,255,255,0.12)' : 'transparent', submit: s.view==='submit' ? 'rgba(255,255,255,0.12)' : 'transparent' },
+      query: s.query, onQueryChange: this.onQueryChange,
+      setViewGrid: this.setViewGrid, setViewList: this.setViewList,
+      isGridView: s.layout === 'grid', isListView: s.layout === 'list',
+      viewToggleBg: { grid: s.layout==='grid' ? '#003057' : 'transparent', list: s.layout==='list' ? '#003057' : 'transparent' },
+      viewToggleColor: { grid: s.layout==='grid' ? '#fff' : '#54585A', list: s.layout==='list' ? '#fff' : '#54585A' },
+      typeFilters,
+      discipline: s.discipline, onDisciplineChange: this.onDisciplineChange,
+      disciplineOptions: DISCIPLINES,
+      disciplineOptionsNoAll: DISCIPLINES.filter(d => d !== 'All Disciplines'),
+      hasActiveFilters: !!(s.query || s.typeFilter !== 'All' || s.discipline !== 'All Disciplines'),
+      clearFilters: this.clearFilters,
+      resultCountLabel: `${filtered.length} organization${filtered.length === 1 ? '' : 's'} found`,
+      filteredOrgs: filtered,
+      noResults: filtered.length === 0,
+      selectedOrg: { ...selected, statusBg: selSc.bg, statusColor: selSc.color },
+      formName: s.formName, formType: s.formType, formDiscipline: s.formDiscipline, formDesc: s.formDesc, formTags: s.formTags, formEmail: s.formEmail,
+      onFormNameChange: this.onFormNameChange, onFormTypeChange: this.onFormTypeChange, onFormDisciplineChange: this.onFormDisciplineChange,
+      onFormDescChange: this.onFormDescChange, onFormTagsChange: this.onFormTagsChange, onFormEmailChange: this.onFormEmailChange,
+      onSubmit: this.onSubmit, resetForm: this.resetForm,
+      submitted: s.submitted, showForm: !s.submitted,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

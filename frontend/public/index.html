@@ -3,95 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>GT Campus Opportunity Finder</title>
+<title>Opportunity Finder — Georgia Tech</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<div class="blueprint-bg"></div>
-
-<header class="topbar">
-  <div class="brand">
-    <span class="brand-mark">[GT]</span>
-    <h1>Campus Opportunity Finder</h1>
-  </div>
-  <button id="openSubmitBtn" class="btn btn-accent">+ Submit an Opportunity</button>
-</header>
-
-<main class="container">
-  <section class="controls">
-    <div class="search-row">
-      <input id="searchInput" type="text" placeholder="Search opportunities (e.g. drone, ML, biomedical)..." autocomplete="off" />
-      <span class="mono result-count" id="resultCount">-- results</span>
-    </div>
-
-    <div class="type-tabs" id="typeTabs">
-      <button class="tab active" data-type="">All</button>
-      <button class="tab" data-type="vip">VIP</button>
-      <button class="tab" data-type="lab">Lab</button>
-      <button class="tab" data-type="club">Club</button>
-    </div>
-
-    <div class="tag-filters" id="tagFilters">
-      <div class="mono tag-filters-loading">loading tag vocabulary...</div>
-    </div>
-  </section>
-
-  <section id="grid" class="grid" aria-live="polite">
-    <div class="mono loading-msg">loading opportunities...</div>
-  </section>
-</main>
-
-<footer class="footer mono">
-  data sourced live from GT VIP, Georgia Tech labs, and Engage student orgs — GET /api/opportunities
-</footer>
-
-<!-- Detail modal -->
-<div id="detailModal" class="modal-backdrop hidden">
-  <div class="modal card-tick">
-    <button class="modal-close" data-close="detail">&times;</button>
-    <div id="detailContent"></div>
-  </div>
-</div>
-
-<!-- Submission modal -->
-<div id="submitModal" class="modal-backdrop hidden">
-  <div class="modal card-tick">
-    <button class="modal-close" data-close="submit">&times;</button>
-    <h2 class="mono">Submit an Opportunity</h2>
-    <p class="modal-sub">Know a VIP team, lab, or club not listed here? Submit it for review.
-      Submissions are queued as <span class="mono">pending</span> and reviewed before they appear publicly.</p>
-    <form id="submitForm">
-      <label class="mono">Type *
-        <select name="type" required>
-          <option value="vip">VIP</option>
-          <option value="lab">Lab</option>
-          <option value="club" selected>Club</option>
-        </select>
-      </label>
-      <label class="mono">Name *
-        <input type="text" name="name" required maxlength="200" />
-      </label>
-      <label class="mono">Description *
-        <textarea name="description" required rows="4" maxlength="2000"></textarea>
-      </label>
-      <label class="mono">Majors <span class="hint">(comma-separated, e.g. CS, EE)</span>
-        <input type="text" name="majors" placeholder="CS, EE, ME" />
-      </label>
-      <label class="mono">Link
-        <input type="url" name="link" placeholder="https://..." />
-      </label>
-      <label class="mono">Tags <span class="hint">(select any that apply)</span>
-        <div id="submitTagChips" class="tag-chip-picker"></div>
-      </label>
-      <label class="mono">Your GT email <span class="hint">(optional)</span>
-        <input type="email" name="submittedBy" placeholder="gburdell3@gatech.edu" />
-      </label>
-      <div class="form-status mono" id="formStatus"></div>
-      <button type="submit" class="btn btn-accent">Submit for review</button>
-    </form>
-  </div>
-</div>
-
+<div id="app"></div>
 <script src="app.js"></script>
 </body>
 </html>
