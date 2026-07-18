@@ -15,7 +15,19 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
   "description": "String",
   "majors": ["CS", "EE"],
   "link": "https://example.com",
-  "meta": { "any": "extra scraped/curated fields go here" },
+  "meta": { "any": "scraper/admin bookkeeping (e.g. vipEntryId, rejectionReason)" },
+  "details": {
+    "goals": "...",
+    "issues_addressed": "...",
+    "partners_sponsors": "...",
+    "methods_technologies": "...",
+    "majors_by_category": { "Engineering": ["Computer Engineering"] },
+    "preferred_interests": "...",
+    "advisor_name": "...",
+    "advisor_email": "...",
+    "advisor_department": "...",
+    "meeting_info": "..."
+  },
   "source": "scraped",
   "status": "approved",
   "submittedBy": null,
@@ -31,6 +43,16 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
 `type` is one of `vip | lab | club`. `source` is one of
 `scraped | curated | user_submitted`. `status` is one of
 `approved | pending | rejected`.
+
+`details` is a free-form JSON object (jsonb-equivalent, like `meta`) for
+type-specific structured fields that don't apply across vip/lab/club rows —
+the keys above are what the VIP scraper populates; lab/club rows may have an
+empty `details: {}` or different keys entirely. Every string value nested in
+`details` (plus `name`/`description`/`majors`/tag labels) feeds a combined
+full-text search index (SQLite FTS5, this project's tsvector equivalent) —
+`GET /api/opportunities?search=` and the admin equivalent both query it, so a
+search for a term that only appears in `details` (e.g. a methods/technologies
+entry or an advisor's name) still surfaces the right opportunity.
 
 ### Review shape (`ReviewDTO`, Addition 3)
 
@@ -94,7 +116,7 @@ Query params (all optional, combinable):
 | param | type | notes |
 |---|---|---|
 | `type` | `vip \| lab \| club` | exact match |
-| `search` | string | substring match against name + description |
+| `search` | string | full-text match against name, description, majors, tag labels, and every string value in `details` (not just description) |
 | `tags` | comma-separated tag slugs, e.g. `robotics,ml-ai` | opportunity must have at least one matching tag |
 
 Example: `GET /api/opportunities?type=vip&tags=robotics,ml-ai&search=drone`

@@ -29,6 +29,19 @@ export const opportunities = sqliteTable("opportunities", {
   link: text("link"),
   // TEXT-serialized JSON object (jsonb-equivalent). Access via getMeta()/setMeta().
   meta: text("meta").notNull().default("{}"),
+  // TEXT-serialized JSON object (jsonb-equivalent) for type-specific structured
+  // fields that don't apply across vip/lab/club (e.g. VIP's advisor_email,
+  // methods_technologies). Access via getDetails()/setDetails(). Kept separate
+  // from `meta` (scraper/admin bookkeeping) because `details` holds
+  // human-facing content that also feeds the search index below.
+  details: text("details").notNull().default("{}"),
+  // Denormalized, precomputed blob of all searchable text (name + description +
+  // majors + tag labels + flattened `details` values), kept in sync by the
+  // mutation helpers in data-access.ts. This is the SQLite stand-in for a
+  // Postgres tsvector generated column: `opportunities_fts` (an FTS5 virtual
+  // table, see migrations/0002) indexes this column so search reaches into
+  // `details` instead of just `description`.
+  searchBlob: text("search_blob").notNull().default(""),
   source: text("source", { enum: OPPORTUNITY_SOURCES }).notNull(),
   status: text("status", { enum: OPPORTUNITY_STATUSES }).notNull().default("pending"),
   submittedBy: text("submitted_by"),
