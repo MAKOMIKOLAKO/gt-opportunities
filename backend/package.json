@@ -1,0 +1,29 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "migrate": "tsx src/db/migrate.ts",
+    "seed:tags": "tsx src/db/seed-tags.ts",
+    "dev": "tsx watch src/index.ts",
+    "smoke": "tsx src/db/smoke-test.ts",
+    "scrape:vip": "echo 'not yet implemented' && exit 0",
+    "scrape:engage": "echo 'not yet implemented' && exit 0",
+    "classify:engage": "echo 'not yet implemented' && exit 0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.9.1",
+    "drizzle-orm": "^0.38.4",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.5",
+    "drizzle-kit": "^0.30.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
