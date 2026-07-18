@@ -296,3 +296,15 @@ root workspace install, which breaks the moment `frontend/` is installed
 standalone as its own service root) and move `tsx` from `backend/`'s
 devDependencies to dependencies (it's the production start command, not
 just a dev tool — Nixpacks installs can skip devDependencies).
+
+## Addition 6: Vercel Web Analytics needs a dashboard toggle, not just code
+
+Added page-view-only Vercel Analytics to the static frontend (`<script
+defer src="/_vercel/insights/script.js">` snippet in `index.html`,
+`admin.html`, and `admin/index.html`, plus `@vercel/analytics` added to
+`frontend/package.json` per Vercel's own recommendation). Per Vercel's
+docs, the script alone is not enough on its own: **Analytics must also be
+explicitly enabled with the "Enable" button under the Analytics tab in the
+Vercel project dashboard** — that's a one-time human dashboard click, not
+something set via code or env vars. No further collection (custom events,
+user IDs) was added — page views only.
