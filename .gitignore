@@ -9,6 +9,8 @@ NOTES-FOR-REVIEW.md
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 data/raw-cache/
 data/classification-cache/
 dist/
