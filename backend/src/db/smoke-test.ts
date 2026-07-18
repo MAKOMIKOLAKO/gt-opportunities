@@ -1,17 +1,17 @@
 // One-off smoke test (not a permanent test suite): inserts one approved, one
 // pending, one rejected opportunity, then proves getPublic() only returns the
 // approved row while getForAdmin() sees all three. Run with `tsx
-// src/db/smoke-test.ts` against a migrated + seeded DB.
-import { db, sqlite } from "./client.js";
+// src/db/smoke-test.ts` against a migrated + seeded DB (DATABASE_URL set).
+import { db, pool } from "./client.js";
 import { opportunities } from "./schema.js";
 import { setMajors, setMeta } from "./json-columns.js";
 import { getPublic, getForAdmin } from "./data-access.js";
 
-// Clean slate for repeatable runs.
-db.delete(opportunities).run();
+async function main() {
+  // Clean slate for repeatable runs.
+  await db.delete(opportunities);
 
-db.insert(opportunities)
-  .values([
+  await db.insert(opportunities).values([
     {
       type: "vip",
       name: "Approved VIP Team",
@@ -45,41 +45,46 @@ db.insert(opportunities)
       reviewedBy: "admin",
       reviewedAt: new Date().toISOString(),
     },
-  ])
-  .run();
+  ]);
 
-const publicResults = getPublic();
-const adminResults = getForAdmin();
+  const publicResults = await getPublic();
+  const adminResults = await getForAdmin();
 
-console.log("=== getPublic() ===");
-console.log(JSON.stringify(publicResults, null, 2));
+  console.log("=== getPublic() ===");
+  console.log(JSON.stringify(publicResults, null, 2));
 
-console.log("\n=== getForAdmin() ===");
-console.log(JSON.stringify(adminResults, null, 2));
+  console.log("\n=== getForAdmin() ===");
+  console.log(JSON.stringify(adminResults, null, 2));
 
-console.log("\n=== ASSERTIONS ===");
-console.assert(publicResults.length === 1, `expected 1 public row, got ${publicResults.length}`);
-console.assert(
-  publicResults[0]?.status === "approved",
-  `expected public row status 'approved', got ${publicResults[0]?.status}`
-);
-console.assert(adminResults.length === 3, `expected 3 admin rows, got ${adminResults.length}`);
-console.assert(
-  adminResults.some((r) => r.status === "pending"),
-  "expected admin results to include a pending row"
-);
-console.assert(
-  adminResults.some((r) => r.status === "rejected"),
-  "expected admin results to include a rejected row"
-);
+  console.log("\n=== ASSERTIONS ===");
+  console.assert(publicResults.length === 1, `expected 1 public row, got ${publicResults.length}`);
+  console.assert(
+    publicResults[0]?.status === "approved",
+    `expected public row status 'approved', got ${publicResults[0]?.status}`
+  );
+  console.assert(adminResults.length === 3, `expected 3 admin rows, got ${adminResults.length}`);
+  console.assert(
+    adminResults.some((r) => r.status === "pending"),
+    "expected admin results to include a pending row"
+  );
+  console.assert(
+    adminResults.some((r) => r.status === "rejected"),
+    "expected admin results to include a rejected row"
+  );
 
-const allAssertionsHeld =
-  publicResults.length === 1 &&
-  publicResults[0]?.status === "approved" &&
-  adminResults.length === 3 &&
-  adminResults.some((r) => r.status === "pending") &&
-  adminResults.some((r) => r.status === "rejected");
+  const allAssertionsHeld =
+    publicResults.length === 1 &&
+    publicResults[0]?.status === "approved" &&
+    adminResults.length === 3 &&
+    adminResults.some((r) => r.status === "pending") &&
+    adminResults.some((r) => r.status === "rejected");
 
-console.log(allAssertionsHeld ? "\nSMOKE TEST PASSED" : "\nSMOKE TEST FAILED");
-sqlite.close();
-process.exit(allAssertionsHeld ? 0 : 1);
+  console.log(allAssertionsHeld ? "\nSMOKE TEST PASSED" : "\nSMOKE TEST FAILED");
+  await pool.end();
+  process.exit(allAssertionsHeld ? 0 : 1);
+}
+
+main().catch((err) => {
+  console.error("Smoke test failed:", err);
+  process.exit(1);
+});

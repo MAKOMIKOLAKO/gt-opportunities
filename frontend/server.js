@@ -1,10 +1,18 @@
+// LOCAL DEV CONVENIENCE ONLY — not part of the deployed app. Production is a
+// single Vercel project (see root vercel.json + DEPLOY.md): Vercel serves
+// frontend/public as static output and routes /api/* to the serverless
+// functions under /api directly, so this proxy server has no production
+// role. Prefer `npx vercel dev` from the repo root for local dev that
+// matches production routing; this file remains only for quickly serving
+// the static frontend against a backend you're running some other way.
+//
 // Tiny static file server + same-origin API proxy for the frontend.
 //
-// Why a proxy at all: the backend (backend/src/index.ts) does not send
-// CORS headers, and this is a separate workspace (frontend/) — out of
-// scope to edit backend/. Serving the static files AND proxying /api/*
-// to the backend from the same origin/port means the browser never sees
-// a cross-origin request, so app.js can just call fetch("/api/...").
+// Why a proxy at all: a bare `/api` Vercel function does not send CORS
+// headers by default, and this is a separate workspace (frontend/).
+// Serving the static files AND proxying /api/* to the backend from the
+// same origin/port means the browser never sees a cross-origin request, so
+// app.js can just call fetch("/api/...").
 //
 // Usage: BACKEND_URL=http://localhost:35500 PORT=8080 node server.js
 import express from "express";

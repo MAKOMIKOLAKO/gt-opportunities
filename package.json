@@ -8,12 +8,18 @@
     "frontend"
   ],
   "scripts": {
+    "build": "npm run migrate --workspace backend",
     "migrate": "npm run migrate --workspace backend",
     "seed:tags": "npm run seed:tags --workspace backend",
-    "dev:backend": "npm run dev --workspace backend",
+    "smoke": "npm run smoke --workspace backend",
     "dev:frontend": "npm run dev --workspace frontend",
     "scrape:vip": "npm run scrape:vip --workspace backend",
     "scrape:engage": "npm run scrape:engage --workspace backend",
-    "classify:engage": "npm run classify:engage --workspace backend"
+    "classify:engage": "npm run classify:engage --workspace backend",
+    "typecheck": "npm run typecheck --workspace backend && tsc --noEmit -p api/tsconfig.json"
+  },
+  "devDependencies": {
+    "@vercel/node": "^5.1.14",
+    "typescript": "^5.7.3"
   }
 }

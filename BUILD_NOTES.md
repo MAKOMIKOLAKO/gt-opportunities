@@ -164,6 +164,102 @@ Confirmed via git history search (`git log --all -S`, `git log --all -p --
 has ever been committed — the previous random-per-process-start design
 meant there was never a static credential to leak. Nothing needs rotating.
 
+## 2026-07-18: Restructure for Vercel-only hosting (Postgres/Neon, /api functions)
+
+This closes out the gap flagged in "Addition 5: Railway deployment — kept
+SQLite instead of migrating to Postgres" below, plus removes Railway
+entirely in favor of a single Vercel project (frontend static output +
+`/api` serverless functions, no second host).
+
+**Express -> `/api` serverless functions.** `backend/src/index.ts` (the
+Express bootstrap) is deleted. Every route from
+`backend/src/routes/{public,submit,admin}.ts` is now a standalone file
+under `/api` (Vercel's plain `/api` directory convention — see
+`API-CONTRACT.md` for the route list, each `/api/**/*.ts` file's header
+comment names the Express route it replaces). `backend/` is no longer a
+standalone app; it's shared lib code (`backend/src/db/`, `backend/src/lib/`)
+imported by both `/api/**` and the standalone scraper scripts, which is
+exactly the "repurpose backend/ as shared lib" option the restructure task
+called out. `backend/src/lib/auth.ts`'s `requireAdmin` was reworked from an
+Express middleware `(req, res, next)` into a plain function taking the raw
+`Authorization` header value and returning the verified payload or `null`
+— framework-agnostic, callable from any handler shape. Vercel's Node.js
+runtime auto-parses `req.body` for JSON content types and merges dynamic
+route segments (`[id].ts`) into `req.query`, so no body-parsing or
+param-parsing middleware was needed to replace `express.json()`.
+
+**SQLite -> Postgres (Neon).** This is the piece the earlier note explicitly
+punted on because of the FTS5 full-text search layer. What actually
+happened:
+- `backend/src/db/schema.ts` ported from `sqlite-core` to `pg-core`.
+  `majors`/`meta`/`details` (previously TEXT-serialized JSON) are now native
+  `jsonb`; `json-columns.ts`'s accessors — which were deliberately the one
+  file that would need to change — now just normalize already-parsed jsonb
+  values instead of JSON.parse/stringify-ing TEXT. Timestamps use Postgres
+  `timestamp` columns in `{ mode: "string" }` so every DTO (still typed as
+  plain `string` throughout the codebase) needed zero changes.
+- Full-text search dropped the FTS5 virtual table + sync triggers entirely.
+  `search_blob` (the precomputed searchable-text column, unchanged in
+  purpose) is now queried directly at query time via
+  `to_tsvector('english', search_blob) @@ plainto_tsquery('english', $1)`,
+  backed by a GIN expression index defined in `schema.ts` itself (so
+  `drizzle-kit generate` tracks it like any other index, rather than being a
+  hand-written trigger in the migration runner). This is simpler than
+  replicating FTS5's virtual-table+trigger machinery and was the right
+  tradeoff given the existing `search_blob` column was already the
+  single source of truth for indexed text — no ranking/prefix-match
+  semantics from the old MATCH query were relied on anywhere in
+  `API-CONTRACT.md`, so nothing observable changed.
+- Driver choice: `pg` (node-postgres) via `drizzle-orm/node-postgres`, not
+  `@neondatabase/serverless` + `drizzle-orm/neon-http`. Reason:
+  `updateOpportunity()` (the admin edit-then-approve flow) needs a real
+  interactive `db.transaction()`, which the neon-http HTTP driver does not
+  support (only neon-http's own non-interactive "batch" mode, or the
+  websocket-based `neon-serverless` driver would work). `pg` speaks
+  standard Postgres wire protocol, which Neon's **pooled** connection string
+  supports directly and works fine from Vercel's Node.js (non-Edge)
+  serverless runtime — see `.env.example` for why pooled (not direct)
+  matters here (connection-limit exhaustion under many concurrent
+  short-lived functions).
+- Every function in `data-access.ts` is now `async` (node-postgres/drizzle
+  has no `.all()`/`.run()`/`.get()` — those were better-sqlite3-specific
+  synchronous APIs). All call sites (the `/api/**` handlers, the two
+  scrapers that touch the DB) were updated to `await` accordingly.
+- Migrations regenerated from scratch for the `postgresql` dialect
+  (`backend/drizzle.config.ts`); the old SQLite migration files were
+  deleted rather than kept as dead history, since a fresh Postgres DB has no
+  need to replay a SQLite-dialect migration path.
+- Migration runner (`backend/src/db/migrate.ts`) is wired into
+  `npm run build` at the repo root, which is `vercel.json`'s
+  `buildCommand` — so migrations apply automatically on every Vercel
+  deploy, before the `/api` functions are packaged. Same idempotency
+  guarantee as before (drizzle's own migration-tracking table), just
+  without the FTS5 trigger-drop/rebuild dance the old runner needed (there
+  are no triggers anymore).
+
+**Railway removed.** Both `railway.json` files (root + `frontend/`) are
+deleted. `DEPLOY.md` is rewritten for the Vercel+Neon flow end to end.
+`frontend/server.js` (the Express static-file+proxy server) is kept only as
+an explicitly-labeled local-dev convenience — it has no role in the
+deployed app, since Vercel serves `frontend/public` as static output
+directly and routes `/api/*` to the functions itself.
+
+**Not done, out of scope per the restructure task:** no scheduling/cron was
+added for the scrapers (still manual `tsx`-invoked scripts, per instruction);
+no Next.js conversion was needed or attempted — the plain `/api` convention
+covered every route in `API-CONTRACT.md` without hitting a wall, so the
+escape hatch in the restructure task's instructions was not exercised.
+
+**Verified statically only** (no live Neon database or real Vercel deploy
+available in this environment): `drizzle-kit generate` ran successfully
+against the new pg schema (confirms the schema compiles and the migration
+SQL is well-formed); TypeScript typechecking across `backend/src` and
+`/api` (see the `typecheck` script). **Not verified**: an actual migration
+run against a live Postgres instance, the scrapers' Postgres writes, or a
+real `vercel dev`/deploy. Whoever picks this up for a real deploy should run
+`npm run migrate` against a throwaway Neon branch first and sanity-check the
+result before pointing it at anything real.
+
 ## Addition 5: two Railway services, not one
 
 The repo is an npm-workspaces monorepo (`backend/`, `frontend/`) with two

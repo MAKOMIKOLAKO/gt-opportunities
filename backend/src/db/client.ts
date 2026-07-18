@@ -1,20 +1,27 @@
-import Database from "better-sqlite3";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+// Postgres (Neon) connection, shared by every /api handler, the migration
+// runner, and the standalone scraper scripts. Uses `pg` (node-postgres) via
+// `drizzle-orm/node-postgres` rather than `@neondatabase/serverless` +
+// `drizzle-orm/neon-http` — see BUILD_NOTES.md for why: this codebase's
+// admin edit-then-approve flow (`updateOpportunity` in data-access.ts) needs
+// a real interactive transaction, which the neon-http HTTP driver does not
+// support. `pg` talks standard Postgres wire protocol, which Neon's pooled
+// ("pgbouncer") connection string supports directly, and works fine from
+// Vercel's Node.js (non-Edge) serverless runtime.
+//
+// A single `Pool` is created per cold start and reused across invocations
+// within the same warm lambda instance (module-level singleton), which is
+// the standard pattern for serverless + node-postgres.
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema.js";
-import path from "node:path";
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Set it to your Neon pooled connection string (see .env.example)."
+  );
+}
 
-// backend/data/db.sqlite — kept out of git (see .gitignore *.sqlite / *.db).
-const DATA_DIR = path.resolve(__dirname, "../../data");
-export const DB_PATH = process.env.DB_PATH ?? path.join(DATA_DIR, "db.sqlite");
+export const pool = new Pool({ connectionString: DATABASE_URL });
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-
-export const sqlite = new Database(DB_PATH);
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
-
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(pool, { schema });

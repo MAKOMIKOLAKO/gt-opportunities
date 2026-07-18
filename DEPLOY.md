@@ -1,52 +1,101 @@
-# Deploying to Railway
+# Deploying to Vercel
 
-Everything automatable is already wired up: build/start commands
-(`railway.json`, `frontend/railway.json`), migrations running on every
-deploy (`npm run migrate --workspace backend` before the server starts),
-and env-based config (`.env.example`, `frontend/.env.example`). The steps
-below are the ones that genuinely require a human in a browser.
+This project deploys as a **single Vercel project** — no second host, no
+Railway, no Render. Vercel serves two things from the same project:
 
-**Note on the database:** this deploys with SQLite on a Railway Volume, not
-a managed Postgres instance. See `BUILD_NOTES.md` ("Addition 5: Railway
-deployment — kept SQLite instead of migrating to Postgres") for why, and
-what a real Postgres migration would involve if you want to revisit that.
+- The static frontend (`frontend/public/*.html`, `app.js`, `admin.js`,
+  `style.css`) as static output.
+- Every file under `/api` as its own Node.js serverless function, using
+  Vercel's plain `/api` directory convention (no framework — see each
+  handler file for the route it implements, and `API-CONTRACT.md` for the
+  full list).
 
-## 1. Create the backend service
+The database is [Neon](https://neon.tech) (managed Postgres), not a Volume
+or a second service — see `BUILD_NOTES.md` for the SQLite -> Postgres port
+this replaces (`backend/src/db/schema.ts`, `data-access.ts`).
 
-1. Railway dashboard -> New Project -> Deploy from GitHub repo -> select
-   this repo.
-2. Railway will detect `railway.json` at the repo root and use it
-   automatically (Nixpacks build, migrate-then-start command).
-3. Service Settings -> Add a **Volume**, mount path `/data`.
-4. Service Settings -> Variables -> add every var from `.env.example` with
-   real values:
-   - `DB_PATH=/data/db.sqlite`
-   - `ADMIN_USERNAME`, `ADMIN_PASSWORD` (pick real ones)
-   - `JWT_SECRET` (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
-   - `NODE_ENV=production`
-   - Do **not** set `PORT` — Railway injects it.
-5. Deploy. First deploy runs migrations against the empty volume and
-   creates the schema automatically.
-6. Settings -> Networking -> generate a public domain for this service.
-   Copy that URL, you'll need it for step 2.
+## 1. Create the Neon database
 
-## 2. Create the frontend service
+1. [neon.tech](https://neon.tech) -> New Project.
+2. Once created, go to **Connection Details** and copy the **pooled**
+   connection string (the one with `-pooler` in the hostname — this matters,
+   see the comment in `.env.example`). It looks like:
+   ```
+   postgresql://user:password@ep-xxxx-pooler.region.aws.neon.tech/dbname?sslmode=require
+   ```
 
-1. Same project -> New -> GitHub Repo -> same repo again.
-2. Settings -> Root Directory -> set to `frontend`. Railway will now use
-   `frontend/railway.json` for this service instead of the root one.
-3. Variables -> add from `frontend/.env.example`:
-   - `BACKEND_URL` = the backend's public URL from step 1.6.
-4. Networking -> generate a public domain for this service. This is the
-   URL users actually visit.
+## 2. Create the Vercel project
 
-## 3. Verify
+1. Vercel dashboard -> Add New -> Project -> import this repo.
+2. Vercel will detect `vercel.json` at the repo root automatically:
+   - `outputDirectory: "frontend/public"` — the static site.
+   - `/api/**` — auto-detected as serverless functions (Node.js runtime,
+     pinned via `vercel.json`'s `functions` block).
+   - `buildCommand: "npm run build"` — runs
+     `npm run migrate --workspace backend` before Vercel finishes the build,
+     so schema migrations apply on every deploy (see step 4).
+3. Project Settings -> Environment Variables -> add every var from
+   `.env.example` with real values:
+   - `DATABASE_URL` — the Neon pooled connection string from step 1.
+   - `ADMIN_USERNAME`, `ADMIN_PASSWORD` (pick real ones).
+   - `JWT_SECRET` (generate:
+     `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`).
+   - `NODE_ENV=production`.
+   - Apply these to Production (and Preview, if you want preview deploys to
+     hit the same DB — or point Preview at a separate Neon branch/database
+     for isolation).
+4. Deploy. The build runs migrations against Neon (idempotent — safe to
+   re-run on every deploy, see `backend/src/db/migrate.ts`), then Vercel
+   packages `/api/**` and publishes `frontend/public` as static output.
 
-- Visit the frontend's public URL, confirm the opportunity list loads
-  (proves the frontend -> backend proxy and the DB are both working).
-- Visit `<backend-url>/health`, confirm `{"ok": true}`.
-- Log into `/admin.html` on the frontend URL with the `ADMIN_USERNAME` /
-  `ADMIN_PASSWORD` you set in step 1.4.
+## 3. Seed the tag vocabulary (one-time)
 
-That's it — every subsequent push to `main` redeploys both services and
-re-runs migrations automatically (safe no-op if nothing changed).
+Migrations create the schema but don't seed data. Run once, from a machine
+with `DATABASE_URL` pointed at the same Neon database used in production:
+
+```
+DATABASE_URL="<neon pooled connection string>" npm run seed:tags
+```
+
+## 4. Verify
+
+- Visit the Vercel project's URL, confirm the opportunity list loads (proves
+  `frontend/public/app.js`'s same-origin `fetch("/api/...")` calls are
+  reaching the serverless functions, and that the functions can reach Neon).
+- Visit `<project-url>/api/health`, confirm `{"ok": true}`.
+- Log into `/admin.html` (or `/admin/index.html`) with the `ADMIN_USERNAME` /
+  `ADMIN_PASSWORD` set in step 2.
+
+That's it — every subsequent push to the branch Vercel is tracking redeploys
+and re-runs migrations automatically (safe no-op if the schema didn't
+change).
+
+## Running the scrapers
+
+The scrapers (`backend/src/scrapers/vip.ts`, `engage-scrape.ts`,
+`engage-classify.ts`) are **not** part of the Vercel deployment — they stay
+standalone scripts you run manually (locally, or from any machine/CI job),
+pointed at the same Neon database via `DATABASE_URL`:
+
+```
+DATABASE_URL="<neon pooled connection string>" npm run scrape:vip
+DATABASE_URL="<neon pooled connection string>" npm run scrape:engage
+DATABASE_URL="<neon pooled connection string>" npm run classify:engage
+```
+
+`scrape:engage` drives a headless browser (Playwright) and has no DB
+dependency of its own — it only writes to `data/raw-cache/engage/`.
+`classify:engage` reads that cache and writes to Postgres, so it's the one
+that needs `DATABASE_URL`. See root `SCHEDULING.md` for suggested run
+cadence (VIP: once per semester; Engage: monthly).
+
+## Local development
+
+- `DATABASE_URL="<neon pooled connection string, or a local Postgres>" npx vercel dev`
+  runs the `/api` functions + static frontend together, matching production
+  routing.
+- Alternatively, `node frontend/server.js` still works as a lightweight
+  static-file server for the frontend only (see its updated comment header —
+  it's local-dev convenience only now, not a deployed service).
+- `npm run migrate`, `npm run seed:tags`, `npm run smoke` all read
+  `DATABASE_URL` from the environment the same way production does.

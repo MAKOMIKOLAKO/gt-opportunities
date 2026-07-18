@@ -14,28 +14,35 @@ admin approves it.
 
 ```
 gtopportunities/
-├── backend/            Express + TypeScript API, SQLite (better-sqlite3 + Drizzle ORM)
+├── api/                 Vercel serverless functions (one file per route — see API-CONTRACT.md)
+│   └── _lib/             shared http/auth helpers (not deployed as routes)
+├── backend/             Shared lib: DB schema/migrations/data-access + standalone scrapers
 │   └── src/
-│       ├── db/          schema, migrations, data-access layer, tag vocabulary
-│       ├── routes/       public.ts / submit.ts / admin.ts
-│       ├── scrapers/     vip.ts, engage-scrape.ts, engage-classify.ts
-│       └── lib/          auth.ts (admin session auth)
-├── frontend/            Static site + a tiny same-origin API proxy (server.js)
-│   └── public/           index.html/app.js (public site), admin/ (moderation UI)
+│       ├── db/            schema, migrations, data-access layer, tag vocabulary (Postgres/Drizzle)
+│       ├── scrapers/      vip.ts, engage-scrape.ts, engage-classify.ts (run via tsx, not deployed)
+│       └── lib/           auth.ts (admin session auth, framework-agnostic)
+├── frontend/            Static site, deployed as-is by Vercel
+│   └── public/            index.html/app.js (public site), admin/ (moderation UI)
 ├── data/                 Scraper cache (raw HTML/JSON + classification results), gitignored
+├── vercel.json          Wires /api functions + frontend/public static output into one project
 ├── API-CONTRACT.md      Source of truth for every endpoint's request/response shape
 ├── BUILD_NOTES.md       Handoff notes, deliberate scope exclusions, open reconciliation items
 └── SCHEDULING.md        Recommended cadence for re-running the scrapers
 ```
 
-- **Backend**: Express + TypeScript on top of SQLite (`better-sqlite3`),
-  schema and queries via [Drizzle ORM](https://orm.drizzle.team/). Full-text
-  search uses SQLite's FTS5 extension over name/description/majors/tag
-  labels/`details`.
-- **Frontend**: Plain HTML/CSS/vanilla JS, served by a small Express static
-  server (`frontend/server.js`) that also proxies `/api/*` to the backend so
-  the browser only ever talks to one origin (the backend itself sends no
-  CORS headers, by design — see the comment in `server.js`).
+- **Backend**: no long-running server. Every route is a standalone Node.js
+  serverless function under `/api` (Vercel's plain `/api` directory
+  convention — no framework), sharing DB/auth code from `backend/src/`.
+  Schema and queries via [Drizzle ORM](https://orm.drizzle.team/) against
+  managed Postgres ([Neon](https://neon.tech)). Full-text search runs at
+  query time via Postgres `to_tsvector(...) @@ plainto_tsquery(...)` over
+  name/description/majors/tag labels/`details`, backed by a GIN expression
+  index.
+- **Frontend**: Plain HTML/CSS/vanilla JS, served directly by Vercel as
+  static output (`frontend/public`) from the same project as `/api` — same
+  origin, so `app.js`'s `fetch("/api/...")` calls need no CORS handling.
+  `frontend/server.js` still exists as a local-dev convenience (see its
+  header comment) but plays no role in production.
 - **Data model**: three opportunity `type`s (`vip | lab | club`), each with
   a `status` (`approved | pending | rejected`) and `source`
   (`scraped | curated | user_submitted`). Only `approved` rows are ever
@@ -45,8 +52,9 @@ gtopportunities/
 ## Prerequisites
 
 - Node.js 18+ and npm
-- No external database or services required — SQLite is a local file
-  (`backend/data/db.sqlite` by default)
+- A Postgres database — [Neon](https://neon.tech) (free tier works) is what
+  this is built/documented against. Set `DATABASE_URL` to its pooled
+  connection string (see `.env.example`).
 
 ## Setup
 
@@ -54,7 +62,7 @@ gtopportunities/
 # from repo root
 npm install
 
-# create the SQLite db and run migrations
+# apply database migrations against DATABASE_URL
 npm run migrate
 
 # seed the controlled tag vocabulary (discipline/interest tags used for filtering)
@@ -63,29 +71,28 @@ npm run seed:tags
 
 ## Running locally
 
-Run the backend and frontend in separate terminals:
-
 ```bash
-# terminal 1 — API on :3000
-npm run dev:backend
-
-# terminal 2 — static site + API proxy on :8080
-npm run dev:frontend
+# /api functions + static frontend together, matching production routing
+DATABASE_URL="<your neon pooled connection string>" npx vercel dev
 ```
 
-Then open **http://localhost:8080**. The frontend proxies `/api/*` to
-`http://localhost:3000` by default (override with `BACKEND_URL` /
-`PORT` env vars on `frontend/server.js`).
+Then open the URL `vercel dev` prints (typically **http://localhost:3000**).
+
+Alternatively, `node frontend/server.js` still serves the static frontend
+alone (see DEPLOY.md's "Local development" section) if you're running the
+API some other way.
 
 ### Admin login
 
-There is no admin account to configure — a random admin password is
-generated fresh every time the backend process starts (`backend/src/lib/auth.ts`).
-It's printed to the backend's console on startup and also written to a
-gitignored `RUN-STATUS.md` at the repo root, so it's discoverable without
-ever being hardcoded or committed. **Restarting the backend invalidates the
-previous password.** Log in at `/admin.html` (served by the frontend) with
-username `admin` and that password.
+For local dev, set `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `JWT_SECRET` in a
+`.env` file read by `vercel dev` (see `.env.example`) so you have known
+credentials to log in with. If left unset, `backend/src/lib/auth.ts`
+generates a random password + session secret per cold start instead — usable
+for a quick poke around locally, but the value isn't surfaced anywhere
+(no more single-process startup log to print it to, now that there's no
+long-running server), so setting real values is the practical option even
+for local dev. Log in at `/admin.html` (or `/admin/index.html`) with
+username `admin` (default) and the password you set.
 
 ## Populating data
 
@@ -132,16 +139,17 @@ Run from the repo root (npm workspaces):
 
 | Command | Description |
 |---|---|
+| `npm run build` | Runs migrations (Vercel's build step calls this automatically) |
 | `npm run migrate` | Apply database migrations |
 | `npm run seed:tags` | Seed the controlled tag vocabulary |
-| `npm run dev:backend` | Start the API in watch mode (`:3000`) |
-| `npm run dev:frontend` | Start the static site + API proxy (`:8080`) |
+| `npm run dev:frontend` | Start the static-file-only dev server (`:8080`, no `/api`) |
+| `npx vercel dev` | Start `/api` functions + static frontend together (matches prod routing) |
 | `npm run scrape:vip` | Scrape/upsert the VIP catalog |
 | `npm run scrape:engage` | Scrape the Engage/CampusLabs org directory |
 | `npm run classify:engage` | Classify scraped Engage orgs (technical/tags) |
+| `npm run smoke` | Quick end-to-end sanity check against the database |
 
-Backend-only (`cd backend`): `npm run smoke` runs a quick end-to-end sanity
-check against the database.
+All scripts read `DATABASE_URL` from the environment.
 
 ## Notable design decisions
 

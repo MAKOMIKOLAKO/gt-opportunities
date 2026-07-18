@@ -4,8 +4,13 @@
 // and restarts. If unset (local dev only), a random password + secret are
 // generated at process startup instead — never hardcoded, never committed.
 // Sessions are opaque bearer tokens: base64url(payload) + "." + hmac-signature.
+//
+// Framework-agnostic on purpose: this used to take Express's
+// (Request, Response, NextFunction) directly; now it's called from plain
+// Vercel Node function handlers (`/api/**`), so `requireAdmin` just takes a
+// raw Authorization header value and returns the verified payload or null —
+// callers decide how to respond.
 import crypto from "node:crypto";
-import type { Request, Response, NextFunction } from "express";
 
 export const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "admin";
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? crypto.randomBytes(16).toString("hex"); // 32 chars
@@ -13,8 +18,8 @@ const SESSION_SECRET = process.env.JWT_SECRET ?? crypto.randomBytes(32).toString
 if (process.env.NODE_ENV === "production" && (!process.env.ADMIN_PASSWORD || !process.env.JWT_SECRET)) {
   console.warn(
     "WARNING: ADMIN_PASSWORD and/or JWT_SECRET not set in production — using a random value generated at " +
-      "startup, which changes on every restart and invalidates admin sessions. Set them in the Railway " +
-      "dashboard env vars (see .env.example)."
+      "startup, which changes on every cold start and invalidates admin sessions. Set them in the Vercel " +
+      "project's env vars (see .env.example)."
   );
 }
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -55,14 +60,14 @@ export function verifyToken(token: string | undefined | null): SessionPayload | 
   }
 }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const header = req.header("authorization") ?? "";
+/**
+ * Verifies an `Authorization: Bearer <token>` header value and returns the
+ * session payload, or null if missing/invalid/expired. Framework-agnostic —
+ * callers (the /api/admin/** handlers) are responsible for reading the
+ * header off `req` and responding 401 when this returns null.
+ */
+export function requireAdmin(authorizationHeader: string | string[] | undefined | null): SessionPayload | null {
+  const header = Array.isArray(authorizationHeader) ? authorizationHeader[0] : authorizationHeader ?? "";
   const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
-  const payload = verifyToken(token);
-  if (!payload) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-  (req as Request & { adminUser?: string }).adminUser = payload.username;
-  next();
+  return verifyToken(token);
 }

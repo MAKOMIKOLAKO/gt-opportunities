@@ -16,7 +16,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
-import { db } from "../db/client.js";
+import { db, pool } from "../db/client.js";
 import { opportunities, opportunityTags, tags } from "../db/schema.js";
 import { setMajors, setMeta } from "../db/json-columns.js";
 import { TAG_VOCABULARY } from "../db/tag-vocabulary.js";
@@ -73,8 +73,8 @@ function loadCached(orgId: string): ClassificationRecord | null {
   }
 }
 
-function ensureTagIds(): Map<string, number> {
-  const rows = db.select().from(tags).all();
+async function ensureTagIds(): Promise<Map<string, number>> {
+  const rows = await db.select().from(tags);
   const bySlug = new Map(rows.map((r) => [r.slug, r.id]));
   // Sanity: every vocabulary slug we might assign must exist in the tags table
   // (seed-tags.ts is responsible for that; we just fail loudly if it's stale).
@@ -86,7 +86,11 @@ function ensureTagIds(): Map<string, number> {
   return bySlug;
 }
 
-function upsertOpportunity(org: RawOrgRecord, classification: ClassificationRecord, tagIdBySlug: Map<string, number>) {
+async function upsertOpportunity(
+  org: RawOrgRecord,
+  classification: ClassificationRecord,
+  tagIdBySlug: Map<string, number>
+) {
   const majorTags = classification.tags
     .map((slug) => TAG_VOCABULARY.find((t) => t.slug === slug))
     .filter((t): t is (typeof TAG_VOCABULARY)[number] => !!t && t.category === "major")
@@ -102,14 +106,15 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
     classifiedAt: classification.classifiedAt,
   };
 
-  const existing = db.select().from(opportunities).where(eq(opportunities.link, org.link)).all();
+  const existing = await db.select().from(opportunities).where(eq(opportunities.link, org.link));
 
   let opportunityId: number;
   if (existing.length > 0) {
     opportunityId = existing[0].id;
     // Requested one-off: also force approved on update, overriding the
     // usual "never touch status on re-classify" rule.
-    db.update(opportunities)
+    await db
+      .update(opportunities)
       .set({
         name: org.name,
         description: org.description,
@@ -119,11 +124,10 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
         status: "approved",
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(opportunities.id, opportunityId))
-      .run();
-    db.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId)).run();
+      .where(eq(opportunities.id, opportunityId));
+    await db.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId));
   } else {
-    const result = db
+    const [inserted] = await db
       .insert(opportunities)
       .values({
         type: "club",
@@ -135,20 +139,20 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
         source: "scraped",
         status: "approved", // Requested one-off: auto-approve on insert.
       })
-      .run();
-    opportunityId = Number(result.lastInsertRowid);
+      .returning({ id: opportunities.id });
+    opportunityId = inserted.id;
   }
 
   for (const slug of classification.tags) {
     const tagId = tagIdBySlug.get(slug);
     if (tagId == null) continue; // already warned above if vocabulary/table are out of sync
-    db.insert(opportunityTags).values({ opportunityId, tagId }).run();
+    await db.insert(opportunityTags).values({ opportunityId, tagId });
   }
 
   return opportunityId;
 }
 
-function main() {
+async function main() {
   fs.mkdirSync(CLASSIFICATION_CACHE_DIR, { recursive: true });
 
   const orgs = loadRawOrgs();
@@ -189,7 +193,7 @@ function main() {
   const technical = classifications.filter((c) => c.isTechnical);
   console.log(`${technical.length}/${classifications.length} orgs classified as technical.`);
 
-  const tagIdBySlug = ensureTagIds();
+  const tagIdBySlug = await ensureTagIds();
   const orgById = new Map(orgs.map((o) => [o.id, o]));
 
   // Requested one-off: insert every scraped org, not just ones classified
@@ -200,13 +204,18 @@ function main() {
   for (const c of classifications) {
     const org = orgById.get(c.orgId);
     if (!org) continue;
-    const existingBefore = db.select().from(opportunities).where(eq(opportunities.link, org.link)).all();
-    upsertOpportunity(org, c, tagIdBySlug);
+    const existingBefore = await db.select().from(opportunities).where(eq(opportunities.link, org.link));
+    await upsertOpportunity(org, c, tagIdBySlug);
     if (existingBefore.length > 0) updated++;
     else inserted++;
   }
 
   console.log(`Opportunities upserted: ${inserted} inserted, ${updated} updated (all scraped orgs).`);
+  await pool.end();
 }
 
-main();
+main().catch(async (err) => {
+  console.error("engage-classify failed:", err);
+  await pool.end();
+  process.exit(1);
+});
