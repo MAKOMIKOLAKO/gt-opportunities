@@ -56,18 +56,26 @@ function initials(name) {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-// Best-effort extraction from the free-form `meta` blob — real records
-// don't consistently populate every field the design calls for, so each
-// falls back to an em dash rather than fabricating a value.
+// Best-effort extraction from the free-form `meta`/`details` blobs — real
+// records don't consistently populate every field the design calls for, so
+// each falls back to an em dash rather than fabricating a value.
+//
+// Two different sources populate these fields with different shapes: hand-
+// curated rows may set meta.lead/meta.meetingInfo/meta.advisors directly,
+// but the VIP scraper (backend/src/scrapers/vip.ts) writes advisor/meeting
+// info into `details` instead, as flat semicolon-joined strings
+// (advisor_name, advisor_email, meeting_info) — check both.
 function detailFields(opp) {
   const meta = opp.meta || {};
+  const details = opp.details || {};
   const advisor = Array.isArray(meta.advisors) && meta.advisors.length ? meta.advisors[0] : null;
   return {
     commitment: meta.commitment || meta.hoursPerWeek || "—",
     creditPay: meta.creditPay || meta.pay || (opp.type === "vip" ? "Credit (VIP course)" : "—"),
-    lead: meta.lead || meta.facultyLead || (advisor ? advisor.name : "—"),
-    meets: meta.meets || meta.meetingInfo || "—",
-    contact: meta.contact || (advisor ? advisor.email : null) || opp.submittedBy || "—",
+    lead: meta.lead || meta.facultyLead || (advisor ? advisor.name : null) || details.advisor_name || "—",
+    meets: meta.meets || meta.meetingInfo || details.meeting_info || "—",
+    contact:
+      meta.contact || (advisor ? advisor.email : null) || details.advisor_email || opp.submittedBy || "—",
     applyUrl: opp.link || null,
   };
 }
