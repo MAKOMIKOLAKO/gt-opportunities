@@ -192,9 +192,12 @@ function main() {
   const tagIdBySlug = ensureTagIds();
   const orgById = new Map(orgs.map((o) => [o.id, o]));
 
+  // Requested one-off: insert every scraped org, not just ones classified
+  // technical. isTechnical/confidence/reasoning are still recorded in each
+  // row's meta for later filtering in the review queue.
   let inserted = 0;
   let updated = 0;
-  for (const c of technical) {
+  for (const c of classifications) {
     const org = orgById.get(c.orgId);
     if (!org) continue;
     const existingBefore = db.select().from(opportunities).where(eq(opportunities.link, org.link)).all();
@@ -203,7 +206,7 @@ function main() {
     else inserted++;
   }
 
-  console.log(`Opportunities upserted: ${inserted} inserted, ${updated} updated (technical orgs only).`);
+  console.log(`Opportunities upserted: ${inserted} inserted, ${updated} updated (all scraped orgs).`);
 }
 
 main();
