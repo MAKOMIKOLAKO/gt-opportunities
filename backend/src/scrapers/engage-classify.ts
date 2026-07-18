@@ -107,9 +107,8 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
   let opportunityId: number;
   if (existing.length > 0) {
     opportunityId = existing[0].id;
-    // Refresh content but deliberately do NOT touch `status` on update — an
-    // admin may have already reviewed this row, and a re-classify run must
-    // never silently flip a reviewed row back to pending or to approved.
+    // Requested one-off: also force approved on update, overriding the
+    // usual "never touch status on re-classify" rule.
     db.update(opportunities)
       .set({
         name: org.name,
@@ -117,6 +116,7 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
         majors: setMajors(majorTags),
         link: org.link,
         meta: setMeta(meta),
+        status: "approved",
         updatedAt: new Date().toISOString(),
       })
       .where(eq(opportunities.id, opportunityId))
@@ -133,7 +133,7 @@ function upsertOpportunity(org: RawOrgRecord, classification: ClassificationReco
         link: org.link,
         meta: setMeta(meta),
         source: "scraped",
-        status: "pending", // ALWAYS pending on insert — this pipeline never auto-approves.
+        status: "approved", // Requested one-off: auto-approve on insert.
       })
       .run();
     opportunityId = Number(result.lastInsertRowid);
