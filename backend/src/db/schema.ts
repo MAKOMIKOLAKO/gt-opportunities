@@ -60,3 +60,50 @@ export const opportunityTags = sqliteTable(
     pk: primaryKey({ columns: [table.opportunityId, table.tagId] }),
   })
 );
+
+// ---- Reviews (Addition 3) ----
+// Anonymous, structured, text-only reviews of an opportunity. Deliberately
+// NO numeric rating field — see BUILD_NOTES.md for why that's a considered
+// omission, not an oversight. Uses a text/uuid PK (crypto.randomUUID()) per
+// spec, which deviates from the integer-PK convention used elsewhere.
+export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+
+export const reviews = sqliteTable("reviews", {
+  id: text("id").primaryKey(),
+  opportunityId: integer("opportunity_id")
+    .notNull()
+    .references(() => opportunities.id, { onDelete: "cascade" }),
+  timeCommitment: text("time_commitment").notNull(),
+  beforeApplying: text("before_applying").notNull(),
+  adviceNewMember: text("advice_new_member").notNull(),
+  status: text("status", { enum: REVIEW_STATUSES }).notNull().default("pending"),
+  createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: text("reviewed_at"),
+});
+
+// ---- Reports (Addition 3) ----
+// NOTE: a `reports` table is also being prototyped, independently and not
+// yet merged, on `worktree-reports-and-vip-search`. This copy was created
+// here because the review-dispute flow needed it wired now. Shape matches
+// that branch's prototype as closely as possible (plus a nullable
+// `review_id` column this feature needs) to ease future reconciliation —
+// see BUILD_NOTES.md.
+export const REPORT_CATEGORIES = ["outdated_info", "broken_link", "wrong_contact", "other"] as const;
+export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
+export const REPORT_STATUSES = ["open", "resolved"] as const;
+export type ReportStatus = (typeof REPORT_STATUSES)[number];
+
+export const reports = sqliteTable("reports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  opportunityId: integer("opportunity_id").references(() => opportunities.id, { onDelete: "cascade" }),
+  reviewId: text("review_id").references(() => reviews.id, { onDelete: "cascade" }),
+  category: text("category", { enum: REPORT_CATEGORIES }).notNull(),
+  details: text("details").notNull().default(""),
+  reporterContact: text("reporter_contact"), // optional, no login required
+  status: text("status", { enum: REPORT_STATUSES }).notNull().default("open"),
+  createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+  resolvedBy: text("resolved_by"),
+  resolvedAt: text("resolved_at"),
+});

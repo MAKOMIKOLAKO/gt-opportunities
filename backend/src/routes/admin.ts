@@ -7,11 +7,18 @@ import {
   approveOpportunity,
   rejectOpportunity,
   updateOpportunity,
+  getReviewsForAdmin,
+  approveReview,
+  rejectReview,
+  getReportsForAdmin,
+  resolveReport,
 } from "../db/data-access.js";
-import type { OpportunityStatus, OpportunityType } from "../db/schema.js";
+import type { OpportunityStatus, OpportunityType, ReviewStatus, ReportStatus } from "../db/schema.js";
 
 const VALID_STATUSES: OpportunityStatus[] = ["approved", "pending", "rejected"];
 const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
+const VALID_REVIEW_STATUSES: ReviewStatus[] = ["pending", "approved", "rejected"];
+const VALID_REPORT_STATUSES: ReportStatus[] = ["open", "resolved"];
 
 export const adminRouter = Router();
 
@@ -58,6 +65,74 @@ adminRouter.post("/admin/opportunities/:id/reject", (req, res) => {
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
   const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
   const result = rejectOpportunity(id, reviewedBy, reason);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Reviews moderation queue (Addition 3) ----
+// Moderation guidance (also surfaced in the admin UI near the controls):
+// the three review prompts are designed to keep responses about the
+// EXPERIENCE (workload, structure, onboarding, culture). Approve accounts
+// of the experience. Reject or send back for edit anything that reads as a
+// specific accusation about a named individual's conduct. This is a
+// judgment call per review — there is no keyword/profanity auto-screening
+// and no LLM auto-approve step (see BUILD_NOTES.md).
+adminRouter.get("/admin/reviews", (req, res) => {
+  const { status } = req.query;
+  const statusFilter = typeof status === "string" && VALID_REVIEW_STATUSES.includes(status as ReviewStatus)
+    ? (status as ReviewStatus)
+    : undefined;
+  const results = getReviewsForAdmin({ status: statusFilter });
+  res.json({
+    results,
+    count: results.length,
+    guidance:
+      "Approve accounts of the experience (workload, structure, onboarding, culture). Reject or send back for edit anything that reads as a specific accusation about a named individual's conduct. This is a judgment call per review — not automatable.",
+  });
+});
+
+adminRouter.post("/admin/reviews/:id/approve", (req, res) => {
+  const id = req.params.id;
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = approveReview(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+adminRouter.post("/admin/reviews/:id/reject", (req, res) => {
+  const id = req.params.id;
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = rejectReview(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Reports / disputes queue (Addition 3) ----
+// See BUILD_NOTES.md — this table/queue duplicates in-progress work on
+// worktree-reports-and-vip-search and will need reconciliation when that
+// branch merges.
+adminRouter.get("/admin/reports", (req, res) => {
+  const { status } = req.query;
+  const statusFilter = typeof status === "string" && VALID_REPORT_STATUSES.includes(status as ReportStatus)
+    ? (status as ReportStatus)
+    : undefined;
+  const results = getReportsForAdmin({ status: statusFilter });
+  res.json({ results, count: results.length });
+});
+
+adminRouter.post("/admin/reports/:id/resolve", (req, res) => {
+  const id = Number(req.params.id);
+  const resolvedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = resolveReport(id, resolvedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;

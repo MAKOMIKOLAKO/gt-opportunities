@@ -88,6 +88,8 @@ const state = {
   allTags: [],
   submitted: false,
   lastSubmittedName: "",
+  reviewFormOpportunityId: null,
+  flagReviewId: null,
 };
 
 let searchDebounce = null;
@@ -124,6 +126,28 @@ async function fetchTags() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return data.results || [];
+}
+
+async function submitReview(opportunityId, body) {
+  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/reviews`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+async function flagReview(reviewId, category, details) {
+  const res = await fetch(`${API_BASE}/reviews/${reviewId}/report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, details }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
 }
 
 // ---------------------------------------------------------------------
@@ -370,11 +394,115 @@ async function loadDetail(id) {
           ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
+
+        ${renderReviewsBlock(opp)}
       </div>
     `;
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
+}
+
+// ---------------------------------------------------------------------
+// Rendering — reviews (Addition 3)
+//
+// Reviews are anonymous, structured (three short-answer prompts), and
+// deliberately have no rating field. Only approved reviews are ever sent
+// to this client (see getApprovedReviews() server-side) — most recent
+// first.
+// ---------------------------------------------------------------------
+
+function renderReviewsBlock(opp) {
+  const reviews = opp.reviews || [];
+  return `
+    <div class="reviews-block">
+      <div class="reviews-block-head">
+        <h2>Member Reviews</h2>
+        <button class="review-write-btn" data-action="open-review-form" data-id="${opp.id}">Write a review</button>
+      </div>
+      ${
+        reviews.length === 0
+          ? `<div class="review-empty">No reviews yet — be the first to share what it's actually like.</div>`
+          : `<div class="review-list">${reviews.map(renderReviewCard).join("")}</div>`
+      }
+    </div>
+  `;
+}
+
+function renderReviewCard(r) {
+  return `
+    <div class="review-card">
+      <div class="review-card-row">
+        <div class="review-card-q">Time commitment</div>
+        <div class="review-card-a">${escapeHtml(r.timeCommitment)}</div>
+      </div>
+      <div class="review-card-row">
+        <div class="review-card-q">Before applying</div>
+        <div class="review-card-a">${escapeHtml(r.beforeApplying)}</div>
+      </div>
+      <div class="review-card-row">
+        <div class="review-card-q">Advice for a new member</div>
+        <div class="review-card-a">${escapeHtml(r.adviceNewMember)}</div>
+      </div>
+      <div class="review-card-footer">
+        <span class="review-card-date">${escapeHtml((r.createdAt || "").slice(0, 10))}</span>
+        <button class="review-flag-btn" data-action="flag-review" data-review-id="${escapeAttr(r.id)}">Flag this review</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderReviewFormModal() {
+  if (!state.reviewFormOpportunityId) return "";
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-review-form">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Write a review</h3>
+        <div class="modal-sub">Anonymous — we don't collect your name, email, or any identifying info. No rating, just three short answers.</div>
+        <form id="reviewForm">
+          <label>What's the time commitment actually like?</label>
+          <textarea name="timeCommitment" required rows="2" maxlength="1000"></textarea>
+          <label>What should someone know before applying?</label>
+          <textarea name="beforeApplying" required rows="2" maxlength="1000"></textarea>
+          <label>Any advice for a new member?</label>
+          <textarea name="adviceNewMember" required rows="2" maxlength="1000"></textarea>
+          <div id="reviewFormError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-review-form">Cancel</button>
+            <button type="submit" class="submit-btn">Submit for review</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+function renderFlagFormModal() {
+  if (!state.flagReviewId) return "";
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-flag-form">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Flag this review</h3>
+        <div class="modal-sub">For PIs/advisors/club leaders to request re-review of a published review. No account needed.</div>
+        <form id="flagForm">
+          <label>Reason</label>
+          <select name="category" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:13.5px;margin-bottom:14px;">
+            <option value="other">Other / needs re-review</option>
+            <option value="outdated_info">Outdated info</option>
+            <option value="wrong_contact">Wrong contact info</option>
+            <option value="broken_link">Broken link</option>
+          </select>
+          <label>Details (optional)</label>
+          <textarea name="details" rows="3" maxlength="1000" placeholder="What's wrong with this review?"></textarea>
+          <div id="flagFormError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-flag-form">Cancel</button>
+            <button type="submit" class="submit-btn">Submit flag</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------
@@ -525,7 +653,7 @@ function render() {
   else if (state.view === "submit") body = renderSubmit();
   else body = renderDirectory();
 
-  app.innerHTML = renderHeader() + body + renderFooter();
+  app.innerHTML = renderHeader() + body + renderFooter() + renderReviewFormModal() + renderFlagFormModal();
   wireEvents();
 
   if (state.view === "directory") {
@@ -550,6 +678,12 @@ function wireEvents() {
   app.addEventListener("click", (e) => {
     const node = e.target.closest("[data-action]");
     if (!node) return;
+    // Modal backdrops close on click, but not when the click originated
+    // inside the modal card itself (data-stop-close) — e.g. clicking a
+    // <select> inside the flag form shouldn't dismiss the modal.
+    if ((node.dataset.action === "close-review-form" || node.dataset.action === "close-flag-form") && e.target.closest("[data-stop-close]")) {
+      return;
+    }
     switch (node.dataset.action) {
       case "go-directory":
         setState({ view: "directory" });
@@ -575,6 +709,20 @@ function wireEvents() {
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
         break;
+      case "open-review-form":
+        setState({ reviewFormOpportunityId: Number(node.dataset.id) });
+        break;
+      case "close-review-form":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ reviewFormOpportunityId: null });
+        break;
+      case "flag-review":
+        setState({ flagReviewId: node.dataset.reviewId });
+        break;
+      case "close-flag-form":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ flagReviewId: null });
+        break;
     }
   });
 
@@ -594,9 +742,56 @@ function wireEvents() {
   });
 
   app.addEventListener("submit", (e) => {
-    if (e.target.id !== "submitForm") return;
-    handleSubmit(e);
+    if (e.target.id === "submitForm") {
+      handleSubmit(e);
+    } else if (e.target.id === "reviewForm") {
+      handleReviewSubmit(e);
+    } else if (e.target.id === "flagForm") {
+      handleFlagSubmit(e);
+    }
   });
+}
+
+async function handleReviewSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = state.reviewFormOpportunityId;
+  const btn = form.querySelector("button[type=submit]");
+  const errorEl = el("#reviewFormError");
+  errorEl.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await submitReview(opportunityId, {
+      timeCommitment: form.timeCommitment.value.trim(),
+      beforeApplying: form.beforeApplying.value.trim(),
+      adviceNewMember: form.adviceNewMember.value.trim(),
+    });
+    setState({ reviewFormOpportunityId: null });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit for review";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleFlagSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const reviewId = state.flagReviewId;
+  const btn = form.querySelector("button[type=submit]");
+  const errorEl = el("#flagFormError");
+  errorEl.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await flagReview(reviewId, form.category.value, form.details.value.trim());
+    setState({ flagReviewId: null });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit flag";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
 }
 
 // Re-render just the "Clear filters" link visibility without a full rebuild.

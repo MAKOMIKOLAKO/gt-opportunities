@@ -32,6 +32,53 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
 `scraped | curated | user_submitted`. `status` is one of
 `approved | pending | rejected`.
 
+### Review shape (`ReviewDTO`, Addition 3)
+
+Anonymous, structured, text-only. **No numeric rating field — this is
+intentional, not a gap; see `BUILD_NOTES.md`.**
+
+```json
+{
+  "id": "ec1a65ba-fe22-436d-9954-ab80a17189a5",
+  "opportunityId": 1,
+  "timeCommitment": "About 8 hrs/week",
+  "beforeApplying": "Know some Python",
+  "adviceNewMember": "Ask questions early",
+  "status": "approved",
+  "createdAt": "2026-07-18 13:44:53",
+  "reviewedBy": null,
+  "reviewedAt": null
+}
+```
+
+`id` is a UUID (text), unlike the integer PKs used elsewhere — required by
+spec. `status` is one of `pending | approved | rejected`. Nothing on this
+row identifies the submitter: no name/email/IP/user-agent field exists on
+the table.
+
+### Report shape (`ReportDTO`, Addition 3)
+
+```json
+{
+  "id": 1,
+  "opportunityId": 1,
+  "reviewId": "ec1a65ba-fe22-436d-9954-ab80a17189a5",
+  "category": "other",
+  "details": "Contains an accusation about a specific officer",
+  "reporterContact": null,
+  "status": "open",
+  "createdAt": "2026-07-18 13:45:12",
+  "resolvedBy": null,
+  "resolvedAt": null
+}
+```
+
+`category` is one of `outdated_info | broken_link | wrong_contact | other`.
+`status` is one of `open | resolved`. `reviewId` is set when the report is a
+dispute against a specific review (as opposed to a general report about the
+opportunity itself); `opportunityId` is still carried for context in that
+case. `reporterContact` is optional and never required.
+
 ---
 
 ## Public endpoints
@@ -64,10 +111,53 @@ Response `200`:
 
 Fetch a single approved opportunity by id.
 
-Response `200`: `{ "result": Opportunity }`
+Response `200`: `{ "result": Opportunity }` — `Opportunity` here includes a
+`reviews` array (Addition 3): approved reviews for this opportunity only,
+most-recent-first. Backed by `getApprovedReviews()` — structurally cannot
+include pending/rejected reviews.
 Response `404`: `{ "error": "not_found" }` (also returned if the row exists
 but is not approved — public callers must not be able to distinguish
 "pending/rejected" from "doesn't exist").
+
+### `POST /api/opportunities/:id/reviews`
+
+Public review submission (Addition 3). No auth, no identifying info
+collected or stored. Creates a `status = "pending"` review — never directly
+visible until an admin approves it.
+
+Request body — exactly the three structured prompts, all required
+non-empty strings, **no rating field**:
+```json
+{
+  "timeCommitment": "About 8 hrs/week",
+  "beforeApplying": "Know some Python",
+  "adviceNewMember": "Ask questions early"
+}
+```
+Response `201`: `{ "result": { "id": "uuid", "status": "pending" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }`
+Response `404`: `{ "error": "not_found" }` if the opportunity isn't
+publicly visible (approved).
+
+### `POST /api/reviews/:id/report`
+
+Dispute/flag a specific **published** review for re-review (Addition 3).
+No auth required — a PI/advisor/club leader flagging a review doesn't need
+an account. Extends the reports mechanism with `reviewId` set.
+
+Request body:
+```json
+{
+  "category": "other",
+  "details": "Contains an accusation about a specific officer",
+  "reporterContact": "optional, e.g. an email to follow up with"
+}
+```
+`category` is one of `outdated_info | broken_link | wrong_contact | other`.
+Response `201`: `{ "result": { "id": 1, "status": "open" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }`
+Response `404`: `{ "error": "not_found" }` if `:id` isn't a currently
+approved review.
 
 ### `GET /api/tags`
 
@@ -176,6 +266,77 @@ Request body (all fields optional except none required):
 Response `200`: `{ "result": Opportunity }`
 Response `404`: `{ "error": "not_found" }`
 Response `400`: `{ "error": "validation_error", "details": ["..."] }`
+
+### `GET /api/admin/reviews?status=pending` (Addition 3)
+
+List reviews for the moderation queue, each linked to its opportunity via
+`opportunityId` **and** `opportunityName` (so the queue never needs a
+second lookup to show what's being reviewed). Backed by
+`getReviewsForAdmin()`. `status` optional (`pending | approved | rejected`);
+omitted = all statuses.
+
+Response `200` also includes a fixed `guidance` string — the moderation
+guidance the admin UI must surface near the approve/reject controls:
+> Approve accounts of the experience (workload, structure, onboarding,
+> culture). Reject or send back for edit anything that reads as a specific
+> accusation about a named individual's conduct. This is a judgment call
+> per review — not automatable.
+
+There is deliberately no keyword/profanity auto-screening and no LLM
+auto-approve step (see `BUILD_NOTES.md`).
+
+```json
+{
+  "results": [
+    {
+      "id": "uuid",
+      "opportunityId": 1,
+      "opportunityName": "Test Robotics Club",
+      "timeCommitment": "...",
+      "beforeApplying": "...",
+      "adviceNewMember": "...",
+      "status": "pending",
+      "createdAt": "...",
+      "reviewedBy": null,
+      "reviewedAt": null
+    }
+  ],
+  "count": 1,
+  "guidance": "..."
+}
+```
+
+### `POST /api/admin/reviews/:id/approve`
+
+Marks a review `approved`, stamping `reviewedBy`/`reviewedAt`. Makes it
+visible on the opportunity's public detail response.
+
+Response `200`: `{ "result": Review }`
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/reviews/:id/reject`
+
+Marks a review `rejected`, stamping `reviewedBy`/`reviewedAt`. Never
+appears in any public response.
+
+Response `200`: `{ "result": Review }`
+Response `404`: `{ "error": "not_found" }`
+
+### `GET /api/admin/reports?status=open` (Addition 3)
+
+List reports/disputes for the moderation queue — both general opportunity
+reports and review disputes (`reviewId` set). Backed by
+`getReportsForAdmin()`. `status` optional (`open | resolved`); omitted =
+all statuses.
+
+Response `200`: `{ "results": [ /* Report[] */ ], "count": 1 }`
+
+### `POST /api/admin/reports/:id/resolve`
+
+Marks a report `resolved`, stamping `resolvedBy`/`resolvedAt`.
+
+Response `200`: `{ "result": Report }`
+Response `404`: `{ "error": "not_found" }`
 
 ---
 
