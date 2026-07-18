@@ -1,14 +1,35 @@
 // Drizzle schema for the GT Campus Opportunity Finder.
 //
-// Dialect note: this targets SQLite (via better-sqlite3) for the overnight build,
-// but is written to be mechanically portable to Postgres later:
-//   - No SQLite-only types are used.
-//   - Array/jsonb-shaped columns (`majors`, `meta`) are stored as TEXT-serialized
-//     JSON here, but callers must NEVER JSON.parse/stringify them directly —
-//     always go through the typed accessors in `./json-columns.ts`, which is the
-//     single place that would change (to native array/jsonb) on a Postgres move.
-import { sqliteTable, text, integer, primaryKey } from "drizzle-orm/sqlite-core";
+// Postgres (Neon) dialect. Previously targeted SQLite for the overnight
+// build; migrated per the deployment task (see BUILD_NOTES.md). Notes on
+// the port:
+//   - `majors` / `meta` / `details` stay TEXT-serialized JSON (unchanged
+//     contract with json-columns.ts) rather than moving to native jsonb —
+//     no caller needed jsonb query operators, so this keeps the diff
+//     minimal. A future move to native jsonb is still a one-file change
+//     (json-columns.ts) if ever needed.
+//   - `created_at` / `updated_at` / `reviewed_at` / etc. are Postgres
+//     `timestamp` columns using drizzle's `{ mode: "string" }`, so the
+//     app-level contract (ISO strings in `OpportunityDTO`/`ReviewDTO`) is
+//     unchanged from the SQLite version — only the storage type changed.
+//   - `search_blob` (plain text, app-maintained) is kept as the
+//     human-debuggable denormalized blob; `search_vector` is a new
+//     `tsvector` column (Postgres's real full-text index type, replacing
+//     SQLite's FTS5 virtual table + triggers) with a GIN index, kept in
+//     sync by `refreshSearchBlob()` in data-access.ts on every write.
+import { pgTable, text, integer, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+// Postgres `tsvector` type — drizzle-orm has no built-in column helper for
+// it, so it's defined via customType. Only ever written through a raw
+// `to_tsvector(...)` SQL expression (see refreshSearchBlob in
+// data-access.ts) and read through `@@` match queries; never touched as a
+// plain JS string.
+const tsvector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
 
 export const OPPORTUNITY_TYPES = ["vip", "lab", "club"] as const;
 export type OpportunityType = (typeof OPPORTUNITY_TYPES)[number];
@@ -19,47 +40,54 @@ export type OpportunitySource = (typeof OPPORTUNITY_SOURCES)[number];
 export const OPPORTUNITY_STATUSES = ["approved", "pending", "rejected"] as const;
 export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number];
 
-export const opportunities = sqliteTable("opportunities", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  type: text("type", { enum: OPPORTUNITY_TYPES }).notNull(),
-  name: text("name").notNull(),
-  description: text("description").notNull().default(""),
-  // TEXT-serialized JSON array of strings. Access via getMajors()/setMajors() in json-columns.ts.
-  majors: text("majors").notNull().default("[]"),
-  link: text("link"),
-  // TEXT-serialized JSON object (jsonb-equivalent). Access via getMeta()/setMeta().
-  meta: text("meta").notNull().default("{}"),
-  // TEXT-serialized JSON object (jsonb-equivalent) for type-specific structured
-  // fields that don't apply across vip/lab/club (e.g. VIP's advisor_email,
-  // methods_technologies). Access via getDetails()/setDetails(). Kept separate
-  // from `meta` (scraper/admin bookkeeping) because `details` holds
-  // human-facing content that also feeds the search index below.
-  details: text("details").notNull().default("{}"),
-  // Denormalized, precomputed blob of all searchable text (name + description +
-  // majors + tag labels + flattened `details` values), kept in sync by the
-  // mutation helpers in data-access.ts. This is the SQLite stand-in for a
-  // Postgres tsvector generated column: `opportunities_fts` (an FTS5 virtual
-  // table, see migrations/0002) indexes this column so search reaches into
-  // `details` instead of just `description`.
-  searchBlob: text("search_blob").notNull().default(""),
-  source: text("source", { enum: OPPORTUNITY_SOURCES }).notNull(),
-  status: text("status", { enum: OPPORTUNITY_STATUSES }).notNull().default("pending"),
-  submittedBy: text("submitted_by"),
-  reviewedBy: text("reviewed_by"),
-  reviewedAt: text("reviewed_at"),
-  lastVerified: text("last_verified"),
-  createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
-  updatedAt: text("updated_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
-});
+export const opportunities = pgTable(
+  "opportunities",
+  {
+    id: serial("id").primaryKey(),
+    type: text("type").$type<OpportunityType>().notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    // TEXT-serialized JSON array of strings. Access via getMajors()/setMajors() in json-columns.ts.
+    majors: text("majors").notNull().default("[]"),
+    link: text("link"),
+    // TEXT-serialized JSON object (jsonb-equivalent). Access via getMeta()/setMeta().
+    meta: text("meta").notNull().default("{}"),
+    // TEXT-serialized JSON object (jsonb-equivalent) for type-specific structured
+    // fields that don't apply across vip/lab/club (e.g. VIP's advisor_email,
+    // methods_technologies). Access via getDetails()/setDetails(). Kept separate
+    // from `meta` (scraper/admin bookkeeping) because `details` holds
+    // human-facing content that also feeds the search index below.
+    details: text("details").notNull().default("{}"),
+    // Denormalized, precomputed blob of all searchable text (name + description +
+    // majors + tag labels + flattened `details` values), kept in sync by the
+    // mutation helpers in data-access.ts.
+    searchBlob: text("search_blob").notNull().default(""),
+    // Real Postgres full-text index, derived from `searchBlob` on every write
+    // (see refreshSearchBlob). Nullable because it's populated by app code,
+    // not a generated column.
+    searchVector: tsvector("search_vector"),
+    source: text("source").$type<OpportunitySource>().notNull(),
+    status: text("status").$type<OpportunityStatus>().notNull().default("pending"),
+    submittedBy: text("submitted_by"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+    lastVerified: timestamp("last_verified", { mode: "string" }),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at", { mode: "string" }).notNull().default(sql`now()`),
+  },
+  (table) => ({
+    searchVectorIdx: index("opportunities_search_vector_idx").using("gin", table.searchVector),
+  })
+);
 
-export const tags = sqliteTable("tags", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const tags = pgTable("tags", {
+  id: serial("id").primaryKey(),
   slug: text("slug").notNull().unique(),
   label: text("label").notNull(),
   category: text("category").notNull(),
 });
 
-export const opportunityTags = sqliteTable(
+export const opportunityTags = pgTable(
   "opportunity_tags",
   {
     opportunityId: integer("opportunity_id")
@@ -82,7 +110,7 @@ export const opportunityTags = sqliteTable(
 export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
-export const reviews = sqliteTable("reviews", {
+export const reviews = pgTable("reviews", {
   id: text("id").primaryKey(),
   opportunityId: integer("opportunity_id")
     .notNull()
@@ -90,10 +118,10 @@ export const reviews = sqliteTable("reviews", {
   timeCommitment: text("time_commitment").notNull(),
   beforeApplying: text("before_applying").notNull(),
   adviceNewMember: text("advice_new_member").notNull(),
-  status: text("status", { enum: REVIEW_STATUSES }).notNull().default("pending"),
-  createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+  status: text("status").$type<ReviewStatus>().notNull().default("pending"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
   reviewedBy: text("reviewed_by"),
-  reviewedAt: text("reviewed_at"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
 });
 
 // ---- Reports (Addition 3) ----
@@ -108,15 +136,15 @@ export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
 export const REPORT_STATUSES = ["open", "resolved"] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
-export const reports = sqliteTable("reports", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const reports = pgTable("reports", {
+  id: serial("id").primaryKey(),
   opportunityId: integer("opportunity_id").references(() => opportunities.id, { onDelete: "cascade" }),
   reviewId: text("review_id").references(() => reviews.id, { onDelete: "cascade" }),
-  category: text("category", { enum: REPORT_CATEGORIES }).notNull(),
+  category: text("category").$type<ReportCategory>().notNull(),
   details: text("details").notNull().default(""),
   reporterContact: text("reporter_contact"), // optional, no login required
-  status: text("status", { enum: REPORT_STATUSES }).notNull().default("open"),
-  createdAt: text("created_at").notNull().default(sql`(CURRENT_TIMESTAMP)`),
+  status: text("status").$type<ReportStatus>().notNull().default("open"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
   resolvedBy: text("resolved_by"),
-  resolvedAt: text("resolved_at"),
+  resolvedAt: timestamp("resolved_at", { mode: "string" }),
 });

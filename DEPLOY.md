@@ -1,52 +1,87 @@
-# Deploying to Railway
+# Deploying (Vercel + Neon)
 
-Everything automatable is already wired up: build/start commands
-(`railway.json`, `frontend/railway.json`), migrations running on every
-deploy (`npm run migrate --workspace backend` before the server starts),
-and env-based config (`.env.example`, `frontend/.env.example`). The steps
+Everything automatable is already wired up: `vercel.json` (static frontend +
+the `/api` serverless function + a build command that runs migrations),
+`.env.example` (every required env var), and three GitHub Actions workflows
+under `.github/workflows/` for the scrapers/classification batch. The steps
 below are the ones that genuinely require a human in a browser.
 
-**Note on the database:** this deploys with SQLite on a Railway Volume, not
-a managed Postgres instance. See `BUILD_NOTES.md` ("Addition 5: Railway
-deployment — kept SQLite instead of migrating to Postgres") for why, and
-what a real Postgres migration would involve if you want to revisit that.
+A Railway deployment of the same app also still works (see the bottom of
+this file) — it predates this Vercel setup and was left in place, now
+pointed at the same Neon database instead of a SQLite volume.
 
-## 1. Create the backend service
+## 1. Create the Neon project
 
-1. Railway dashboard -> New Project -> Deploy from GitHub repo -> select
-   this repo.
-2. Railway will detect `railway.json` at the repo root and use it
-   automatically (Nixpacks build, migrate-then-start command).
-3. Service Settings -> Add a **Volume**, mount path `/data`.
-4. Service Settings -> Variables -> add every var from `.env.example` with
-   real values:
-   - `DB_PATH=/data/db.sqlite`
-   - `ADMIN_USERNAME`, `ADMIN_PASSWORD` (pick real ones)
-   - `JWT_SECRET` (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
-   - `NODE_ENV=production`
-   - Do **not** set `PORT` — Railway injects it.
-5. Deploy. First deploy runs migrations against the empty volume and
-   creates the schema automatically.
-6. Settings -> Networking -> generate a public domain for this service.
-   Copy that URL, you'll need it for step 2.
+1. [neon.tech](https://neon.tech) -> New Project. Any region/name.
+2. Dashboard -> Connection Details -> switch to **"Pooled connection"** (not
+   "Direct connection" — the hostname should contain `-pooler`) -> copy the
+   connection string. You'll set this as `DATABASE_URL` in both places
+   below.
 
-## 2. Create the frontend service
+## 2. Create the Vercel project
 
-1. Same project -> New -> GitHub Repo -> same repo again.
-2. Settings -> Root Directory -> set to `frontend`. Railway will now use
-   `frontend/railway.json` for this service instead of the root one.
-3. Variables -> add from `frontend/.env.example`:
-   - `BACKEND_URL` = the backend's public URL from step 1.6.
-4. Networking -> generate a public domain for this service. This is the
-   URL users actually visit.
+1. [vercel.com](https://vercel.com) -> Add New -> Project -> import this
+   GitHub repo.
+2. Vercel will detect `vercel.json` at the repo root and use it
+   automatically — no framework preset needed, leave "Other" selected.
+3. Project Settings -> Environment Variables -> add every var from
+   `.env.example` with real values (all environments — Production/Preview/
+   Development):
+   - `DATABASE_URL` — the Neon pooled connection string from step 1.2.
+   - `ADMIN_USERNAME`, `ADMIN_PASSWORD` — pick real ones.
+   - `JWT_SECRET` — generate with
+     `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+   - `NODE_ENV=production` (Vercel sets this automatically at runtime, but
+     the build step also reads it — set it explicitly to be safe).
+4. Deploy. The build command (`npm run migrate --workspace backend`, from
+   `vercel.json`) runs migrations against the empty Neon DB and creates the
+   schema before the static assets/function are published. Every later
+   push re-runs this — it's a safe no-op once the DB is already migrated.
+5. Once deployed, seed the tag vocabulary once (`npm run seed:tags
+   --workspace backend`, run locally with `DATABASE_URL` pointed at the
+   same Neon pooled connection string — there's no dashboard button for
+   this, it's a one-off script).
 
 ## 3. Verify
 
-- Visit the frontend's public URL, confirm the opportunity list loads
-  (proves the frontend -> backend proxy and the DB are both working).
-- Visit `<backend-url>/health`, confirm `{"ok": true}`.
-- Log into `/admin.html` on the frontend URL with the `ADMIN_USERNAME` /
-  `ADMIN_PASSWORD` you set in step 1.4.
+- Visit the deployed URL, confirm the opportunity list loads (empty is fine
+  until the scrapers run — proves the DB connection works end to end).
+- Visit `<url>/health`, confirm `{"ok": true}`.
+- Visit `<url>/api/tags`, confirm the seeded tag vocabulary comes back.
+- Log into `<url>/admin.html` with the `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+  set in step 2.3.
 
-That's it — every subsequent push to `main` redeploys both services and
-re-runs migrations automatically (safe no-op if nothing changed).
+## 4. Enable the GitHub Actions workflows
+
+1. Repo -> Settings -> Secrets and variables -> Actions -> New repository
+   secret -> `DATABASE_URL` = the same Neon pooled connection string.
+2. Repo -> Actions tab -> confirm the three workflows (VIP scraper, Engage
+   scrape + classify) are listed and enabled (GitHub disables scheduled
+   workflows on repos with no recent activity sometimes — re-enable if
+   greyed out).
+3. Each workflow has a `workflow_dispatch` trigger — use "Run workflow" in
+   the Actions tab to test manually rather than waiting for the semester
+   cron. See `BUILD_NOTES.md` for the exact cron dates and why they're a
+   defaulted judgment call, not a hard requirement — adjust them by hand if
+   GT's actual add/drop dates differ.
+
+That's it — every subsequent push to `main` redeploys the Vercel project and
+re-runs migrations automatically (safe no-op if nothing changed); the
+scrapers run on their own schedule, or on demand via "Run workflow".
+
+## Optional: also deploying to Railway
+
+The pre-existing Railway setup (`railway.json` at repo root,
+`frontend/railway.json`) still works — it just needs `DATABASE_URL` set to
+the same Neon pooled connection string instead of the old `DB_PATH`/SQLite
+volume setup. If you want it:
+
+1. Railway dashboard -> New Project -> Deploy from GitHub repo -> this repo.
+   Variables -> add `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
+   `JWT_SECRET`, `NODE_ENV=production` (do **not** set `PORT` — Railway
+   injects it). No Volume needed anymore.
+2. Same project -> New -> GitHub Repo -> this repo again -> Settings -> Root
+   Directory -> `frontend`. Variables -> `BACKEND_URL` = the first
+   service's public URL (Settings -> Networking -> generate a domain).
+3. Generate a public domain for the frontend service too — that's the URL
+   users visit.

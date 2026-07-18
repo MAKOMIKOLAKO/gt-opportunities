@@ -20,7 +20,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
-import { db, sqlite } from "../db/client.js";
+import { db, closePool } from "../db/client.js";
 import { opportunities } from "../db/schema.js";
 import { getMeta, setMajors, setMeta, setDetails } from "../db/json-columns.js";
 import { refreshSearchBlob } from "../db/data-access.js";
@@ -285,14 +285,14 @@ export function parseEntryHtml(html: string, vipEntryId: string, link: string): 
   };
 }
 
-function findExistingByVipId(vipEntryId: string) {
-  const rows = db.select().from(opportunities).where(eq(opportunities.type, "vip")).all();
+async function findExistingByVipId(vipEntryId: string) {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.type, "vip"));
   return rows.find((r) => getMeta(r.meta).vipEntryId === vipEntryId);
 }
 
-function upsertEntry(entry: ParsedVipEntry) {
+async function upsertEntry(entry: ParsedVipEntry) {
   const now = new Date().toISOString();
-  const existing = findExistingByVipId(entry.vipEntryId);
+  const existing = await findExistingByVipId(entry.vipEntryId);
   // Scraper bookkeeping only (used to key upserts) — human-facing scraped
   // content goes in `details` below, since that's what feeds search.
   const meta = { vipEntryId: entry.vipEntryId };
@@ -327,15 +327,15 @@ function upsertEntry(entry: ParsedVipEntry) {
   let id: number;
   let action: "inserted" | "updated";
   if (existing) {
-    db.update(opportunities).set(values).where(eq(opportunities.id, existing.id)).run();
+    await db.update(opportunities).set(values).where(eq(opportunities.id, existing.id));
     id = existing.id;
     action = "updated";
   } else {
-    const result = db.insert(opportunities).values(values).run();
-    id = Number(result.lastInsertRowid);
+    const [row] = await db.insert(opportunities).values(values).returning({ id: opportunities.id });
+    id = row.id;
     action = "inserted";
   }
-  refreshSearchBlob(id);
+  await refreshSearchBlob(id);
   return { action, id };
 }
 
@@ -357,7 +357,7 @@ async function main() {
     try {
       const html = await fetchHtml(link, cachePath);
       const entry = parseEntryHtml(html, id, link);
-      const { action } = upsertEntry(entry);
+      const { action } = await upsertEntry(entry);
       if (action === "inserted") inserted++;
       else updated++;
       console.log(`  [${action}] ${id}: ${entry.name}`);
@@ -369,11 +369,11 @@ async function main() {
   }
 
   console.log(`\nDone. inserted=${inserted} updated=${updated} failed=${failed} total=${ids.length}`);
-  sqlite.close();
+  await closePool();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error("Fatal error running VIP scraper:", err);
-  sqlite.close();
+  await closePool();
   process.exit(1);
 });

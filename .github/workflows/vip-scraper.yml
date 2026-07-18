@@ -1,0 +1,31 @@
+name: VIP scraper
+
+# The VIP catalog (vip.gatech.edu) barely changes mid-semester, so this runs
+# roughly once per semester rather than on a tight schedule. The two cron
+# entries below approximate GT's spring/fall semester starts (early Jan /
+# mid Aug) — adjust the dates by hand if the academic calendar shifts;
+# there's nothing dynamic driving them.
+on:
+  schedule:
+    - cron: "0 12 5 1 *" # ~Jan 5, ahead of spring add/drop
+    - cron: "0 12 15 8 *" # ~Aug 15, ahead of fall add/drop
+  workflow_dispatch: {}
+
+jobs:
+  scrape-vip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run VIP scraper
+        run: npm run scrape:vip --workspace backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

@@ -4,8 +4,12 @@
 // param on its filter type at all). Anything that needs to see
 // pending/rejected rows MUST go through `getForAdmin`, which is named to make
 // misuse from a public route obvious in review.
+//
+// Postgres note: every function here is now async (the Neon driver has no
+// synchronous mode the way better-sqlite3 did) — see BUILD_NOTES.md. Callers
+// (routes, scrapers) must `await` these.
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db, sqlite } from "./client.js";
+import { db } from "./client.js";
 import {
   opportunities,
   opportunityTags,
@@ -40,10 +44,10 @@ export interface OpportunityDTO {
   tags: { slug: string; label: string; category: string }[];
 }
 
-function attachTags(rows: (typeof opportunities.$inferSelect)[]): OpportunityDTO[] {
+async function attachTags(rows: (typeof opportunities.$inferSelect)[]): Promise<OpportunityDTO[]> {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.id);
-  const tagRows = db
+  const tagRows = await db
     .select({
       opportunityId: opportunityTags.opportunityId,
       slug: tags.slug,
@@ -52,8 +56,7 @@ function attachTags(rows: (typeof opportunities.$inferSelect)[]): OpportunityDTO
     })
     .from(opportunityTags)
     .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
-    .where(inArray(opportunityTags.opportunityId, ids))
-    .all();
+    .where(inArray(opportunityTags.opportunityId, ids));
 
   const tagsByOpportunity = new Map<number, { slug: string; label: string; category: string }[]>();
   for (const t of tagRows) {
@@ -83,41 +86,41 @@ function attachTags(rows: (typeof opportunities.$inferSelect)[]): OpportunityDTO
   }));
 }
 
-// Sanitizes a free-text search string into an FTS5 MATCH query: each
-// whitespace-separated term becomes a prefix-matched bareword, ANDed
-// together (implicit FTS5 AND). Returns null if nothing usable survives
-// sanitization (e.g. a punctuation-only query), so callers can fall back.
-function ftsMatchQuery(raw: string): string | null {
+// Sanitizes a free-text search string into a Postgres to_tsquery expression:
+// each whitespace-separated term becomes a prefix-matched lexeme (`term:*`),
+// ANDed together. This is the Postgres equivalent of the old SQLite FTS5
+// prefix-match query. Returns null if nothing usable survives sanitization
+// (e.g. a punctuation-only query), so callers can fall back.
+function tsQueryString(raw: string): string | null {
   const terms = raw
     .split(/\s+/)
     .map((t) => t.replace(/[^A-Za-z0-9_]/g, ""))
     .filter(Boolean);
   if (terms.length === 0) return null;
-  return terms.map((t) => `${t}*`).join(" ");
+  return terms.map((t) => `${t}:*`).join(" & ");
 }
 
 /**
- * Full-text search over the `opportunities_fts` index (this project's
- * SQLite stand-in for a Postgres tsvector column — see search_blob in
- * schema.ts). Reaches name, description, majors, tag labels, and every
+ * Full-text search over the `search_vector` tsvector column (this project's
+ * Postgres equivalent of SQLite's FTS5 index — see search_blob/search_vector
+ * in schema.ts). Reaches name, description, majors, tag labels, and every
  * string value nested in `details`, not just description.
  */
-function searchMatchingIds(query: string): Set<number> {
-  const match = ftsMatchQuery(query);
-  if (match) {
-    const rows = sqlite
-      .prepare(`SELECT rowid as id FROM opportunities_fts WHERE opportunities_fts MATCH ?`)
-      .all(match) as { id: number }[];
-    return new Set(rows.map((r) => r.id));
+async function searchMatchingIds(query: string): Promise<Set<number>> {
+  const tsQuery = tsQueryString(query);
+  if (tsQuery) {
+    const rows = await db.execute<{ id: number }>(
+      sql`SELECT id FROM opportunities WHERE search_vector @@ to_tsquery('english', ${tsQuery})`
+    );
+    return new Set(rows.rows.map((r) => Number(r.id)));
   }
-  // No usable FTS terms survived sanitization (e.g. punctuation-only query)
-  // — fall back to a plain substring match so the endpoint still degrades
-  // gracefully instead of returning nothing.
+  // No usable tsquery terms survived sanitization (e.g. punctuation-only
+  // query) — fall back to a plain substring match so the endpoint still
+  // degrades gracefully instead of returning nothing.
   const needle = query.toLowerCase();
-  const rows = db
+  const rows = await db
     .select({ id: opportunities.id, name: opportunities.name, description: opportunities.description })
-    .from(opportunities)
-    .all();
+    .from(opportunities);
   return new Set(
     rows
       .filter((r) => r.name.toLowerCase().includes(needle) || r.description.toLowerCase().includes(needle))
@@ -136,34 +139,30 @@ export interface PublicFilters {
  * below and is NOT a filter param — there is structurally no way for a
  * caller of this function to request pending/rejected rows.
  */
-export function getPublic(filters: PublicFilters = {}): OpportunityDTO[] {
+export async function getPublic(filters: PublicFilters = {}): Promise<OpportunityDTO[]> {
   const conditions = [eq(opportunities.status, "approved" as const)];
 
   if (filters.type) {
     conditions.push(eq(opportunities.type, filters.type));
   }
 
-  let rows = db
+  let rows = await db
     .select()
     .from(opportunities)
-    .where(and(...conditions))
-    .all();
+    .where(and(...conditions));
 
   if (filters.search) {
-    const matchIds = searchMatchingIds(filters.search);
+    const matchIds = await searchMatchingIds(filters.search);
     rows = rows.filter((r) => matchIds.has(r.id));
   }
 
   if (filters.tagSlugs && filters.tagSlugs.length > 0) {
-    const matchIds = new Set(
-      db
-        .select({ opportunityId: opportunityTags.opportunityId })
-        .from(opportunityTags)
-        .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
-        .where(inArray(tags.slug, filters.tagSlugs))
-        .all()
-        .map((r) => r.opportunityId)
-    );
+    const tagMatchRows = await db
+      .select({ opportunityId: opportunityTags.opportunityId })
+      .from(opportunityTags)
+      .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+      .where(inArray(tags.slug, filters.tagSlugs));
+    const matchIds = new Set(tagMatchRows.map((r) => r.opportunityId));
     rows = rows.filter((r) => matchIds.has(r.id));
   }
 
@@ -181,71 +180,64 @@ export interface AdminFilters {
  * Callers MUST gate access to this behind admin auth at the route layer;
  * this function performs no auth check itself.
  */
-export function getForAdmin(filters: AdminFilters = {}): OpportunityDTO[] {
+export async function getForAdmin(filters: AdminFilters = {}): Promise<OpportunityDTO[]> {
   const conditions = [];
   if (filters.status) conditions.push(eq(opportunities.status, filters.status));
   if (filters.type) conditions.push(eq(opportunities.type, filters.type));
 
-  let rows = db
+  let rows = await db
     .select()
     .from(opportunities)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .all();
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
 
   if (filters.search) {
-    const matchIds = searchMatchingIds(filters.search);
+    const matchIds = await searchMatchingIds(filters.search);
     rows = rows.filter((r) => matchIds.has(r.id));
   }
 
   return attachTags(rows);
 }
 
-export function getAllTags() {
-  return db.select().from(tags).all();
+export async function getAllTags() {
+  return db.select().from(tags);
 }
 
 // ---- Mutation helpers (submission + admin review flows) ----
 // These are the sanctioned write paths so routes never build drizzle
 // queries against `opportunities` inline.
 
-function tagIdsForSlugs(slugs: string[]): number[] {
+async function tagIdsForSlugs(slugs: string[]): Promise<number[]> {
   if (slugs.length === 0) return [];
-  return db
-    .select({ id: tags.id })
-    .from(tags)
-    .where(inArray(tags.slug, slugs))
-    .all()
-    .map((r) => r.id);
+  const rows = await db.select({ id: tags.id }).from(tags).where(inArray(tags.slug, slugs));
+  return rows.map((r) => r.id);
 }
 
-function replaceTagLinks(opportunityId: number, tagSlugs: string[]): void {
-  db.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId)).run();
-  const ids = tagIdsForSlugs(tagSlugs);
+async function replaceTagLinks(opportunityId: number, tagSlugs: string[]): Promise<void> {
+  await db.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId));
+  const ids = await tagIdsForSlugs(tagSlugs);
   for (const tagId of ids) {
-    db.insert(opportunityTags).values({ opportunityId, tagId }).run();
+    await db.insert(opportunityTags).values({ opportunityId, tagId });
   }
 }
 
-function tagLabelsForOpportunity(opportunityId: number): string[] {
-  return db
+async function tagLabelsForOpportunity(opportunityId: number): Promise<string[]> {
+  const rows = await db
     .select({ label: tags.label })
     .from(opportunityTags)
     .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
-    .where(eq(opportunityTags.opportunityId, opportunityId))
-    .all()
-    .map((r) => r.label);
+    .where(eq(opportunityTags.opportunityId, opportunityId));
+  return rows.map((r) => r.label);
 }
 
 /**
- * Recomputes and persists `search_blob` for one row from its current
- * name/description/majors/details/tags. The UPDATE below fires the
- * `opportunities_au` trigger (see migrations/0002), which keeps
- * `opportunities_fts` in sync — callers never touch the FTS table directly.
- * Exported so scrapers (e.g. vip.ts, which upserts via raw db calls rather
- * than these helpers) can keep newly-scraped rows searchable too.
+ * Recomputes and persists `search_blob` + `search_vector` for one row from
+ * its current name/description/majors/details/tags. Callers never touch the
+ * search columns directly. Exported so scrapers (e.g. vip.ts, which upserts
+ * via raw db calls rather than these helpers) can keep newly-scraped rows
+ * searchable too.
  */
-export function refreshSearchBlob(opportunityId: number): void {
-  const rows = db.select().from(opportunities).where(eq(opportunities.id, opportunityId)).all();
+export async function refreshSearchBlob(opportunityId: number): Promise<void> {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.id, opportunityId));
   if (rows.length === 0) return;
   const row = rows[0];
   const blob = buildSearchBlob({
@@ -253,9 +245,12 @@ export function refreshSearchBlob(opportunityId: number): void {
     description: row.description,
     majors: getMajors(row.majors),
     details: getDetails(row.details),
-    tagLabels: tagLabelsForOpportunity(opportunityId),
+    tagLabels: await tagLabelsForOpportunity(opportunityId),
   });
-  db.update(opportunities).set({ searchBlob: blob }).where(eq(opportunities.id, opportunityId)).run();
+  await db
+    .update(opportunities)
+    .set({ searchBlob: blob, searchVector: sql`to_tsvector('english', ${blob})` })
+    .where(eq(opportunities.id, opportunityId));
 }
 
 export interface SubmissionInput {
@@ -269,8 +264,8 @@ export interface SubmissionInput {
 }
 
 /** Public submission path: always source='user_submitted', status='pending'. */
-export function insertSubmission(input: SubmissionInput): number {
-  const result = db
+export async function insertSubmission(input: SubmissionInput): Promise<number> {
+  const [row] = await db
     .insert(opportunities)
     .values({
       type: input.type,
@@ -283,56 +278,60 @@ export function insertSubmission(input: SubmissionInput): number {
       status: "pending",
       submittedBy: input.submittedBy ?? null,
     })
-    .run();
+    .returning({ id: opportunities.id });
 
-  const id = Number(result.lastInsertRowid);
+  const id = row.id;
   if (input.tagSlugs && input.tagSlugs.length > 0) {
-    replaceTagLinks(id, input.tagSlugs);
+    await replaceTagLinks(id, input.tagSlugs);
   }
-  refreshSearchBlob(id);
+  await refreshSearchBlob(id);
   return id;
 }
 
 /** ADMIN-ONLY: fetch a single row regardless of status. */
-export function getByIdForAdmin(id: number): OpportunityDTO | null {
-  const rows = db.select().from(opportunities).where(eq(opportunities.id, id)).all();
+export async function getByIdForAdmin(id: number): Promise<OpportunityDTO | null> {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.id, id));
   if (rows.length === 0) return null;
-  return attachTags(rows)[0];
+  return (await attachTags(rows))[0];
 }
 
 /** ADMIN-ONLY: approve a pending/rejected row, stamping reviewedBy/reviewedAt. */
-export function approveOpportunity(id: number, reviewedBy: string): OpportunityDTO | null {
-  const existing = db.select().from(opportunities).where(eq(opportunities.id, id)).all();
+export async function approveOpportunity(id: number, reviewedBy: string): Promise<OpportunityDTO | null> {
+  const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
   if (existing.length === 0) return null;
-  db.update(opportunities)
+  await db
+    .update(opportunities)
     .set({
       status: "approved",
       reviewedBy,
-      reviewedAt: sql`(CURRENT_TIMESTAMP)`,
-      updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      reviewedAt: sql`now()`,
+      updatedAt: sql`now()`,
     })
-    .where(eq(opportunities.id, id))
-    .run();
+    .where(eq(opportunities.id, id));
   return getByIdForAdmin(id);
 }
 
 /** ADMIN-ONLY: reject a row, stamping reviewedBy/reviewedAt, optional reason into meta. */
-export function rejectOpportunity(id: number, reviewedBy: string, reason?: string): OpportunityDTO | null {
-  const existing = db.select().from(opportunities).where(eq(opportunities.id, id)).all();
+export async function rejectOpportunity(
+  id: number,
+  reviewedBy: string,
+  reason?: string
+): Promise<OpportunityDTO | null> {
+  const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
   if (existing.length === 0) return null;
   const row = existing[0];
   const meta = getMeta(row.meta);
   if (reason) meta.rejectionReason = reason;
-  db.update(opportunities)
+  await db
+    .update(opportunities)
     .set({
       status: "rejected",
       reviewedBy,
-      reviewedAt: sql`(CURRENT_TIMESTAMP)`,
-      updatedAt: sql`(CURRENT_TIMESTAMP)`,
+      reviewedAt: sql`now()`,
+      updatedAt: sql`now()`,
       meta: setMeta(meta),
     })
-    .where(eq(opportunities.id, id))
-    .run();
+    .where(eq(opportunities.id, id));
   return getByIdForAdmin(id);
 }
 
@@ -346,16 +345,16 @@ export interface EditFields {
 }
 
 /** ADMIN-ONLY: edit fields and, if approve=true, flip status to approved in the same write. */
-export function updateOpportunity(
+export async function updateOpportunity(
   id: number,
   fields: EditFields,
   approve: boolean,
   reviewedBy: string
-): OpportunityDTO | null {
-  const existing = db.select().from(opportunities).where(eq(opportunities.id, id)).all();
+): Promise<OpportunityDTO | null> {
+  const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
   if (existing.length === 0) return null;
 
-  const patch: Record<string, unknown> = { updatedAt: sql`(CURRENT_TIMESTAMP)` };
+  const patch: Record<string, unknown> = { updatedAt: sql`now()` };
   if (fields.name !== undefined) patch.name = fields.name;
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.majors !== undefined) patch.majors = setMajors(fields.majors);
@@ -364,21 +363,23 @@ export function updateOpportunity(
   if (approve) {
     patch.status = "approved";
     patch.reviewedBy = reviewedBy;
-    patch.reviewedAt = sql`(CURRENT_TIMESTAMP)`;
+    patch.reviewedAt = sql`now()`;
   }
 
-  db.transaction((tx) => {
-    tx.update(opportunities).set(patch).where(eq(opportunities.id, id)).run();
+  await db.transaction(async (tx) => {
+    await tx.update(opportunities).set(patch).where(eq(opportunities.id, id));
     if (fields.tagSlugs !== undefined) {
-      tx.delete(opportunityTags).where(eq(opportunityTags.opportunityId, id)).run();
-      const ids = tagIdsForSlugs(fields.tagSlugs!);
-      for (const tagId of ids) {
-        tx.insert(opportunityTags).values({ opportunityId: id, tagId }).run();
+      await tx.delete(opportunityTags).where(eq(opportunityTags.opportunityId, id));
+      const idRows = fields.tagSlugs!.length
+        ? await tx.select({ id: tags.id }).from(tags).where(inArray(tags.slug, fields.tagSlugs!))
+        : [];
+      for (const tagRow of idRows) {
+        await tx.insert(opportunityTags).values({ opportunityId: id, tagId: tagRow.id });
       }
     }
   });
 
-  refreshSearchBlob(id);
+  await refreshSearchBlob(id);
   return getByIdForAdmin(id);
 }
 
@@ -428,18 +429,16 @@ export interface ReviewSubmissionInput {
  * on the `reviews` table, so there is structurally nothing here to persist
  * beyond the three text answers.
  */
-export function insertReview(input: ReviewSubmissionInput): string {
+export async function insertReview(input: ReviewSubmissionInput): Promise<string> {
   const id = crypto.randomUUID();
-  db.insert(reviews)
-    .values({
-      id,
-      opportunityId: input.opportunityId,
-      timeCommitment: input.timeCommitment,
-      beforeApplying: input.beforeApplying,
-      adviceNewMember: input.adviceNewMember,
-      status: "pending",
-    })
-    .run();
+  await db.insert(reviews).values({
+    id,
+    opportunityId: input.opportunityId,
+    timeCommitment: input.timeCommitment,
+    beforeApplying: input.beforeApplying,
+    adviceNewMember: input.adviceNewMember,
+    status: "pending",
+  });
   return id;
 }
 
@@ -448,13 +447,12 @@ export function insertReview(input: ReviewSubmissionInput): string {
  * hardcoded — there is no way for a caller to request pending/rejected rows.
  * Most-recent-first.
  */
-export function getApprovedReviews(opportunityId: number): ReviewDTO[] {
-  const rows = db
+export async function getApprovedReviews(opportunityId: number): Promise<ReviewDTO[]> {
+  const rows = await db
     .select()
     .from(reviews)
     .where(and(eq(reviews.opportunityId, opportunityId), eq(reviews.status, "approved" as const)))
-    .orderBy(desc(reviews.createdAt))
-    .all();
+    .orderBy(desc(reviews.createdAt));
   return rows.map(toReviewDTO);
 }
 
@@ -464,21 +462,20 @@ export function getApprovedReviews(opportunityId: number): ReviewDTO[] {
  * (approved) review before accepting a report against it. status =
  * 'approved' is hardcoded, same as getApprovedReviews().
  */
-export function getApprovedReviewById(id: string): ReviewDTO | null {
-  const rows = db
+export async function getApprovedReviewById(id: string): Promise<ReviewDTO | null> {
+  const rows = await db
     .select()
     .from(reviews)
-    .where(and(eq(reviews.id, id), eq(reviews.status, "approved" as const)))
-    .all();
+    .where(and(eq(reviews.id, id), eq(reviews.status, "approved" as const)));
   return rows.length ? toReviewDTO(rows[0]) : null;
 }
 
 /** ADMIN-ONLY: list reviews for the moderation queue, optionally by status. */
-export function getReviewsForAdmin(filters: { status?: ReviewStatus } = {}): (ReviewDTO & {
-  opportunityName: string;
-})[] {
+export async function getReviewsForAdmin(
+  filters: { status?: ReviewStatus } = {}
+): Promise<(ReviewDTO & { opportunityName: string })[]> {
   const conditions = filters.status ? [eq(reviews.status, filters.status)] : [];
-  const rows = db
+  const rows = await db
     .select({
       review: reviews,
       opportunityName: opportunities.name,
@@ -486,34 +483,33 @@ export function getReviewsForAdmin(filters: { status?: ReviewStatus } = {}): (Re
     .from(reviews)
     .innerJoin(opportunities, eq(reviews.opportunityId, opportunities.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(reviews.createdAt))
-    .all();
+    .orderBy(desc(reviews.createdAt));
   return rows.map((r) => ({ ...toReviewDTO(r.review), opportunityName: r.opportunityName }));
 }
 
-function getReviewById(id: string): typeof reviews.$inferSelect | null {
-  const rows = db.select().from(reviews).where(eq(reviews.id, id)).all();
+async function getReviewById(id: string): Promise<typeof reviews.$inferSelect | null> {
+  const rows = await db.select().from(reviews).where(eq(reviews.id, id));
   return rows[0] ?? null;
 }
 
 /** ADMIN-ONLY: approve a pending review, stamping reviewedBy/reviewedAt. */
-export function approveReview(id: string, reviewedBy: string): ReviewDTO | null {
-  if (!getReviewById(id)) return null;
-  db.update(reviews)
-    .set({ status: "approved", reviewedBy, reviewedAt: sql`(CURRENT_TIMESTAMP)` })
-    .where(eq(reviews.id, id))
-    .run();
-  return toReviewDTO(getReviewById(id)!);
+export async function approveReview(id: string, reviewedBy: string): Promise<ReviewDTO | null> {
+  if (!(await getReviewById(id))) return null;
+  await db
+    .update(reviews)
+    .set({ status: "approved", reviewedBy, reviewedAt: sql`now()` })
+    .where(eq(reviews.id, id));
+  return toReviewDTO((await getReviewById(id))!);
 }
 
 /** ADMIN-ONLY: reject a review, stamping reviewedBy/reviewedAt. */
-export function rejectReview(id: string, reviewedBy: string): ReviewDTO | null {
-  if (!getReviewById(id)) return null;
-  db.update(reviews)
-    .set({ status: "rejected", reviewedBy, reviewedAt: sql`(CURRENT_TIMESTAMP)` })
-    .where(eq(reviews.id, id))
-    .run();
-  return toReviewDTO(getReviewById(id)!);
+export async function rejectReview(id: string, reviewedBy: string): Promise<ReviewDTO | null> {
+  if (!(await getReviewById(id))) return null;
+  await db
+    .update(reviews)
+    .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
+    .where(eq(reviews.id, id));
+  return toReviewDTO((await getReviewById(id))!);
 }
 
 // ---- Reports (Addition 3) ----
@@ -558,8 +554,8 @@ export interface ReportInput {
 }
 
 /** Public submission path (no auth). Used for both opportunity reports and review disputes. */
-export function insertReport(input: ReportInput): number {
-  const result = db
+export async function insertReport(input: ReportInput): Promise<number> {
+  const [row] = await db
     .insert(reports)
     .values({
       opportunityId: input.opportunityId ?? null,
@@ -569,30 +565,29 @@ export function insertReport(input: ReportInput): number {
       reporterContact: input.reporterContact ?? null,
       status: "open",
     })
-    .run();
-  return Number(result.lastInsertRowid);
+    .returning({ id: reports.id });
+  return row.id;
 }
 
 /** ADMIN-ONLY: list reports for the moderation queue, optionally by status. */
-export function getReportsForAdmin(filters: { status?: ReportStatus } = {}): ReportDTO[] {
+export async function getReportsForAdmin(filters: { status?: ReportStatus } = {}): Promise<ReportDTO[]> {
   const conditions = filters.status ? [eq(reports.status, filters.status)] : [];
-  const rows = db
+  const rows = await db
     .select()
     .from(reports)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(reports.createdAt))
-    .all();
+    .orderBy(desc(reports.createdAt));
   return rows.map(toReportDTO);
 }
 
 /** ADMIN-ONLY: mark a report resolved, stamping resolvedBy/resolvedAt. */
-export function resolveReport(id: number, resolvedBy: string): ReportDTO | null {
-  const existing = db.select().from(reports).where(eq(reports.id, id)).all();
+export async function resolveReport(id: number, resolvedBy: string): Promise<ReportDTO | null> {
+  const existing = await db.select().from(reports).where(eq(reports.id, id));
   if (existing.length === 0) return null;
-  db.update(reports)
-    .set({ status: "resolved", resolvedBy, resolvedAt: sql`(CURRENT_TIMESTAMP)` })
-    .where(eq(reports.id, id))
-    .run();
-  const rows = db.select().from(reports).where(eq(reports.id, id)).all();
+  await db
+    .update(reports)
+    .set({ status: "resolved", resolvedBy, resolvedAt: sql`now()` })
+    .where(eq(reports.id, id));
+  const rows = await db.select().from(reports).where(eq(reports.id, id));
   return toReportDTO(rows[0]);
 }

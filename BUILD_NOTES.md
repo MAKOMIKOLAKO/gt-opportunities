@@ -164,6 +164,121 @@ Confirmed via git history search (`git log --all -S`, `git log --all -p --
 has ever been committed — the previous random-per-process-start design
 meant there was never a static credential to leak. Nothing needs rotating.
 
+## Addition 6: Vercel + Neon Postgres deployment (supersedes SQLite-on-Railway for this path)
+
+This addition does what Addition 5 explicitly deferred: a real move off
+SQLite onto managed Postgres, plus a Vercel deployment (frontend + API +
+admin panel as one project) and GitHub Actions for the scrapers/
+classification batch. The Railway/SQLite setup from Addition 5 is left in
+place (`railway.json`, `frontend/railway.json`, `DEPLOY.md` used to document
+it) — it still works, just needs `DATABASE_URL` set instead of `DB_PATH`,
+since `backend/src/db/client.ts` no longer reads `DB_PATH` at all. `DEPLOY.md`
+now documents the Vercel path as primary; Railway is a secondary option
+using the same env var.
+
+**Migrated fully, not just config**, since the SQLite FTS5 index had no
+Postgres equivalent to just point a driver at:
+- `backend/src/db/schema.ts`: `sqliteTable` -> `pgTable`, integer autoincrement
+  PKs -> `serial`, and a new `search_vector` `tsvector` column (via a
+  `customType` — drizzle has no built-in tsvector helper) with a GIN index,
+  replacing SQLite's FTS5 virtual table + insert/update/delete triggers.
+  `search_blob` (the human-readable denormalized text) is kept as-is; it now
+  feeds `search_vector` via `to_tsvector('english', search_blob)` instead of
+  feeding an FTS5 shadow table.
+- `backend/src/db/data-access.ts`: `searchMatchingIds()` now issues
+  `search_vector @@ to_tsquery('english', ...)` instead of an FTS5 `MATCH`
+  query, with prefix terms written as Postgres's `term:*` syntax instead of
+  FTS5's `term*`. Substring-fallback behavior (for punctuation-only queries)
+  is unchanged.
+- **Every data-access function is now `async`** (`better-sqlite3` was
+  synchronous; no Postgres Node driver is). This is a real, if mechanical,
+  ripple: every route handler in `backend/src/routes/*` and every DB call in
+  `backend/src/scrapers/{vip,engage-classify}.ts`,
+  `backend/src/db/{seed-tags,smoke-test}.ts` now `await`s. Verified via
+  `npx tsc --noEmit -p backend` (clean) rather than just grepping for
+  `.run()`/`.all()`.
+
+**Driver choice: `drizzle-orm/neon-serverless` (`Pool` over WebSockets), not
+`neon-http`.** The task suggested either. `neon-http` is one HTTP request
+per query with no `db.transaction()` support at all — and
+`updateOpportunity()` needs a real transaction (update the row + replace its
+tag links atomically). `neon-serverless`'s `Pool` talks to Neon's connection
+pooler over WebSockets rather than holding a raw TCP connection, so it's
+still appropriate for short-lived Vercel functions / GitHub Actions runs
+(use the **pooled** `DATABASE_URL`, the one with `-pooler` in the hostname —
+see `.env.example`) while supporting real transactions. `backend/src/db/client.ts`
+exports `closePool()` for short-lived scripts (migrate, scrapers, seed,
+smoke-test) to call in a `finally` block; the long-lived Express app/Vercel
+function intentionally never calls it, so the pool is reused across warm
+invocations.
+
+**Vercel structure**: `backend/src/index.ts`'s `app.listen(...)` was split
+out into `backend/src/app.ts` (just the Express app + route wiring, no
+listen call) so it can be shared by both `backend/src/index.ts` (local dev /
+Railway — still calls `app.listen`) and the new `api/index.ts` at the repo
+root (Vercel's serverless function entry, wraps the same app with
+`serverless-http`). This is a single catch-all function, not one file per
+route, specifically to avoid touching `backend/src/routes/*` business logic
+— see the task's own instruction to prefer minimal disruption there.
+`vercel.json` sets `outputDirectory: "frontend/public"` (served as static
+assets — no build step, matches how it already worked) and
+`buildCommand: "npm run migrate --workspace backend"`, which is how
+migrations satisfy "runs automatically on every Vercel deploy, idempotent on
+redeploy" (drizzle's `migrate()` already no-ops on an already-migrated DB;
+verified by reading `backend/src/db/migrate.ts`, not by running it against
+a live Neon instance — no Neon credentials available in this environment).
+`frontend/server.js`'s dev-only CORS proxy is untouched (still used by
+Railway / local dev) but isn't invoked at all in the Vercel path, since
+frontend and API now share an origin — `frontend/public/app.js`'s
+`API_BASE = "/api"` already worked same-origin with no code change needed.
+
+**Cron timing (human judgment call, defaulted)**: both
+`.github/workflows/vip-scraper.yml` and `.github/workflows/engage-pipeline.yml`
+run twice a year (~Jan 5 / Aug 15 and ~Jan 6 / Aug 16 UTC respectively,
+offset by a day from each other so they don't queue-compete), approximating
+GT's spring/fall add-drop windows per the existing `SCHEDULING.md`
+"once per semester" guidance for these scrapers. These are calendar dates,
+not tied to GT's actual published academic calendar, which shifts slightly
+year to year — a human should sanity-check/adjust the exact days each year,
+or replace with a calendar-aware trigger if that matters enough to build.
+
+**Classification trigger (human judgment call, defaulted)**: chose two
+`needs:`-chained jobs in one workflow (`engage-pipeline.yml`) over a
+separate `workflow_run`-triggered workflow. `engage-scrape.ts` writes raw
+org JSON to local disk (`data/raw-cache/engage/`) and `engage-classify.ts`
+reads that same local dir — `workflow_run` starts on a fresh runner with
+none of that state, so it would need an artifact upload/download anyway to
+bridge the gap. Two jobs in one workflow, connected by
+`actions/upload-artifact` + `actions/download-artifact` and a `needs:`
+dependency, gets the same "classify never runs against an empty/
+half-populated queue" guarantee more simply.
+
+**Neither `neon-http` nor `neon-serverless` needed a live Neon instance to
+verify against** — no Neon project/credentials were available in this
+environment. What was verified: `backend/src/db/schema.ts` typechecks and
+`npx drizzle-kit generate` produces the SQL shown in
+`backend/src/db/migrations/0000_luxuriant_spitfire.sql` (hand-reviewed:
+correct `serial` PKs, FK cascade rules matching the old SQLite migrations,
+GIN index on `search_vector`); the full backend typechecks clean
+(`npx tsc --noEmit -p backend`). **A human needs to actually run
+`npm run migrate --workspace backend` against a real Neon `DATABASE_URL`
+once, and exercise `smoke-test.ts` / a real request, before trusting this in
+production.**
+
+**LLM API key**: none needed. `backend/src/scrapers/engage-classify.ts` uses
+a rule-based classifier (`engage-classify-rules.ts`, keyword/heuristic
+matching), not an external LLM API — despite the task brief's "LLM
+classification batch" framing. `.env.example` doesn't list an API key for
+this reason; if that ever changes, add it there and to the
+`classify-engage` job's `env:` in `engage-pipeline.yml`.
+
+**Auth is still flagged, not redesigned**: `backend/src/lib/auth.ts`'s
+env-var-with-random-fallback pattern (from Addition 5) is unchanged here.
+It's correct as long as `ADMIN_USERNAME`/`ADMIN_PASSWORD`/`JWT_SECRET` are
+actually set in Vercel's dashboard — same requirement as Railway, just a new
+dashboard to set them in. No further redesign attempted, per the task's own
+instruction to flag rather than rebuild auth.
+
 ## Addition 5: two Railway services, not one
 
 The repo is an npm-workspaces monorepo (`backend/`, `frontend/`) with two
