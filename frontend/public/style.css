@@ -591,6 +591,100 @@ main {
   font-size: 12.5px;
 }
 
+/* ---------- Reviews (Addition 3) ---------- */
+
+.reviews-block { margin: 28px 0; padding-top: 20px; border-top: 1px solid #EFF1EE; }
+.reviews-block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.reviews-block-head h2 { font-size: 15px; font-weight: 800; color: var(--navy); margin: 0; }
+.review-write-btn {
+  border: 1.5px solid var(--navy);
+  background: none;
+  color: var(--navy);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.review-list { display: flex; flex-direction: column; gap: 12px; }
+.review-card {
+  background: var(--diploma);
+  border: 1px solid var(--pi-mile);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.review-card-row { margin-bottom: 10px; }
+.review-card-row:last-of-type { margin-bottom: 0; }
+.review-card-q { font-size: 11px; font-weight: 700; color: var(--gray-matter); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 3px; }
+.review-card-a { font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+.review-card-footer { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; }
+.review-card-date { font-size: 11px; color: var(--gray-matter); }
+.review-flag-btn {
+  background: none;
+  border: none;
+  color: var(--gray-matter);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.review-flag-btn:hover { color: #9c2b23; }
+.review-empty { font-size: 13px; color: var(--gray-matter); }
+
+.review-form-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto; z-index: 50;
+}
+.review-form-modal {
+  background: #fff; border-radius: 14px; padding: 26px;
+  max-width: 480px; width: 100%;
+}
+.review-form-modal h3 { font-size: 16px; font-weight: 800; color: var(--navy); margin: 0 0 4px; }
+.review-form-modal .modal-sub { font-size: 12.5px; color: var(--gray-matter); margin-bottom: 16px; }
+.review-form-modal label { display: block; font-size: 12.5px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.review-form-modal textarea {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
+  font-size: 13.5px; margin-bottom: 14px; resize: vertical;
+}
+.review-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.review-form-cancel-btn {
+  background: none; border: 1.5px solid var(--pi-mile); color: var(--gray-matter);
+  padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+
+/* ---------- Admin (Addition 3: reviews + reports queues) ---------- */
+
+.view-admin { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
+.admin-login-form { max-width: 360px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
+.admin-login-form input {
+  padding: 11px 14px; border-radius: 9px; border: 1.5px solid var(--pi-mile); font-size: 14px;
+}
+.admin-guidance {
+  background: #FFF7E0; border: 1px solid #E9CB6B; color: #6b5211;
+  border-radius: 9px; padding: 12px 14px; font-size: 12.5px; margin-bottom: 16px;
+}
+.admin-queue-item {
+  background: #fff; border: 1.5px solid var(--pi-mile); border-radius: 12px;
+  padding: 16px 18px; margin-bottom: 12px;
+}
+.admin-queue-item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.admin-queue-item-title { font-size: 14px; font-weight: 700; color: var(--navy); }
+.admin-queue-item-meta { font-size: 11.5px; color: var(--gray-matter); }
+.admin-queue-actions { display: flex; gap: 8px; margin-top: 12px; }
+.admin-btn {
+  padding: 8px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 700; cursor: pointer; border: none;
+}
+.admin-btn.approve { background: #1f7a3d; color: #fff; }
+.admin-btn.reject { background: #9c2b23; color: #fff; }
+.admin-btn.resolve { background: var(--navy); color: #fff; }
+.admin-tabs { display: flex; gap: 10px; margin-bottom: 18px; }
+.admin-tabs button {
+  background: none; border: 1.5px solid var(--pi-mile); color: var(--gray-matter);
+  padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.admin-tabs button.active { border-color: var(--navy); color: var(--navy); background: var(--diploma); }
+
 /* ---------- Loading / error ---------- */
 
 .state-msg {
