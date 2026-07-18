@@ -1,12 +1,22 @@
-// Simple shared-password admin auth. A random password + session-signing
-// secret are generated at process startup (never hardcoded, never committed).
+// Simple shared-password admin auth. Credentials and the session-signing
+// secret come from the environment in production (ADMIN_USERNAME,
+// ADMIN_PASSWORD, JWT_SECRET — see .env.example) so they survive redeploys
+// and restarts. If unset (local dev only), a random password + secret are
+// generated at process startup instead — never hardcoded, never committed.
 // Sessions are opaque bearer tokens: base64url(payload) + "." + hmac-signature.
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 
-export const ADMIN_USERNAME = "admin";
-export const ADMIN_PASSWORD = crypto.randomBytes(16).toString("hex"); // 32 chars
-const SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+export const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? "admin";
+export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? crypto.randomBytes(16).toString("hex"); // 32 chars
+const SESSION_SECRET = process.env.JWT_SECRET ?? crypto.randomBytes(32).toString("hex");
+if (process.env.NODE_ENV === "production" && (!process.env.ADMIN_PASSWORD || !process.env.JWT_SECRET)) {
+  console.warn(
+    "WARNING: ADMIN_PASSWORD and/or JWT_SECRET not set in production — using a random value generated at " +
+      "startup, which changes on every restart and invalidates admin sessions. Set them in the Railway " +
+      "dashboard env vars (see .env.example)."
+  );
+}
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 interface SessionPayload {
