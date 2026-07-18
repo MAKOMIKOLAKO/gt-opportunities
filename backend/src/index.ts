@@ -24,9 +24,13 @@ app.use("/api", adminRouter);
 
 app.listen(port, () => {
   console.log(`backend listening on :${port}`);
-  console.log(`admin username: ${ADMIN_USERNAME}`);
-  console.log(`admin password: ${ADMIN_PASSWORD}`);
-  writeAdminCredentialsToRunStatus();
+  if (process.env.NODE_ENV === "production") {
+    console.log(`admin username: ${ADMIN_USERNAME}`);
+  } else {
+    console.log(`admin username: ${ADMIN_USERNAME}`);
+    console.log(`admin password: ${ADMIN_PASSWORD}`);
+    writeAdminCredentialsToRunStatus();
+  }
 });
 
 // Writes the freshly generated admin password into RUN-STATUS.md (gitignored)
