@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 import { db, closePool } from "../db/client.js";
 import { opportunities, opportunityTags, tags } from "../db/schema.js";
 import { setMajors, setMeta } from "../db/json-columns.js";
+import { refreshSearchBlob } from "../db/data-access.js";
 import { TAG_VOCABULARY } from "../db/tag-vocabulary.js";
 import { classifyOrg } from "./engage-classify-rules.js";
 
@@ -148,6 +149,10 @@ async function upsertOpportunity(
     if (tagId == null) continue; // already warned above if vocabulary/table are out of sync
     await db.insert(opportunityTags).values({ opportunityId, tagId });
   }
+
+  // Without this, search_blob/search_vector stay at their empty defaults and
+  // the row never surfaces in full-text search — see vip.ts for the same pattern.
+  await refreshSearchBlob(opportunityId);
 
   return opportunityId;
 }
