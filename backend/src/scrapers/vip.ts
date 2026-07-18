@@ -10,6 +10,10 @@
 //      keyed on `meta.vipEntryId` so re-runs UPDATE rather than duplicate.
 //
 // Run: npm run scrape:vip (from backend/)
+//
+// Scheduling: run once per semester (roughly Jan and Aug, ahead of add/drop).
+// The VIP catalog changes rarely mid-semester, so more frequent runs are not
+// needed. See /docs or root SCHEDULING.md for the cron/Task Scheduler entry.
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import path from "node:path";

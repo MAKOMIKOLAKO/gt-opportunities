@@ -16,6 +16,16 @@
 // reliably) until skip >= @odata.count, and write one raw-cache JSON file
 // per organization keyed by its Id so stage 2 (classify) can cache
 // classification results per-org without re-fetching.
+//
+// Scheduling: this pipeline (scrape + classify) is the piece MOST LIKELY to
+// need re-running periodically — the ~730-org Engage directory turns over
+// far more than the VIP catalog (new clubs register, orgs go inactive) and
+// classification quality depends on catching name/description changes.
+// Recommend running scrape+classify monthly during the semester, and
+// definitely re-run at the start of each semester. Every run's new/updated
+// rows still land as status='pending' — nothing from this pipeline reaches
+// the public app without a human passing it through the admin review queue.
+// See root SCHEDULING.md for the cron/Task Scheduler entry.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
