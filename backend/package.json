@@ -15,17 +15,16 @@
     "classify:engage": "tsx src/scrapers/engage-classify.ts"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2",
-    "tsx": "^4.19.2",
-    "ws": "^8.21.1"
+    "pg": "^8.13.1",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
-    "@types/ws": "^8.18.1",
+    "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.30.2",
     "playwright": "^1.61.1",
     "typescript": "^5.7.3"
