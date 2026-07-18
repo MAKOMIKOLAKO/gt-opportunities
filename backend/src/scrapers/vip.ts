@@ -22,7 +22,8 @@ import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db, sqlite } from "../db/client.js";
 import { opportunities } from "../db/schema.js";
-import { getMeta, setMajors, setMeta } from "../db/json-columns.js";
+import { getMeta, setMajors, setMeta, setDetails } from "../db/json-columns.js";
+import { refreshSearchBlob } from "../db/data-access.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -123,27 +124,60 @@ interface Advisor {
   name: string;
   raw: string;
   email: string | null;
+  department: string | null;
 }
+
+const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/;
 
 function parseAdvisors($: CheerioAPI, cards: ReturnType<CheerioAPI>): Advisor[] {
   const advisors: Advisor[] = [];
   cards.each((_, card) => {
     const $card = $(card);
-    const rawText = $card.text().trim();
-    if (!rawText) return;
+    if (!$card.text().trim()) return;
+
+    // Emails are always inside an <a> (mailto: href, or just a bare address
+    // as both href and text) — extract from the anchor itself rather than
+    // regexing the card's flattened text, which sometimes concatenates the
+    // preceding department line directly onto the email with no separator
+    // (source markup omits a <br/> there), corrupting a naive text match.
+    const $emailLink = $card
+      .find("a")
+      .filter((_, a) => {
+        const href = $(a).attr("href") ?? "";
+        return href.includes("@") || $(a).text().includes("@");
+      })
+      .first();
+    const email =
+      $emailLink.text().match(EMAIL_RE)?.[0] ??
+      $emailLink.attr("href")?.replace(/^mailto:/, "").match(EMAIL_RE)?.[0] ??
+      null;
+
+    // Remove the email anchor before splitting into lines so it can't get
+    // glued onto the department text above.
     const clone = $card.clone();
+    clone.find("a").each((_, a) => {
+      const $a = $(a);
+      if (($a.attr("href") ?? "").includes("@") || $a.text().includes("@")) $a.remove();
+    });
     clone.find("br").replaceWith("\n");
     const lines = clone
       .text()
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean);
-    if (lines.length === 0) return;
-    const emailMatch = rawText.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+
+    const name = $card.find("strong").first().text().trim() || lines[0] || "";
+    // Cards are name / [department] / email, but department is sometimes
+    // omitted (a duplicate of the name instead) — drop lines that are the
+    // name repeated.
+    const department = lines.filter((l) => l.toLowerCase() !== name.toLowerCase()).join("; ");
+
+    if (!name && !email) return;
     advisors.push({
-      name: $card.find("strong").first().text().trim() || lines[0],
-      raw: lines.join(" | "),
-      email: emailMatch ? emailMatch[0] : null,
+      name,
+      raw: [...lines, email].filter(Boolean).join(" | "),
+      email,
+      department: department || null,
     });
   });
   return advisors;
@@ -178,6 +212,7 @@ export interface ParsedVipEntry {
   vipEntryId: string;
   name: string;
   description: string;
+  goals: string;
   majors: string[];
   majorsByCategory: Record<string, string[]>;
   advisors: Advisor[];
@@ -237,6 +272,7 @@ export function parseEntryHtml(html: string, vipEntryId: string, link: string): 
     vipEntryId,
     name,
     description,
+    goals,
     majors,
     majorsByCategory,
     advisors,
@@ -257,15 +293,21 @@ function findExistingByVipId(vipEntryId: string) {
 function upsertEntry(entry: ParsedVipEntry) {
   const now = new Date().toISOString();
   const existing = findExistingByVipId(entry.vipEntryId);
-  const meta = {
-    vipEntryId: entry.vipEntryId,
-    majorsByCategory: entry.majorsByCategory,
-    advisors: entry.advisors,
-    methods: entry.methods,
-    preferredPrep: entry.preferredPrep,
-    meetingInfo: entry.meetingInfo,
-    partners: entry.partners,
-    issues: entry.issues,
+  // Scraper bookkeeping only (used to key upserts) — human-facing scraped
+  // content goes in `details` below, since that's what feeds search.
+  const meta = { vipEntryId: entry.vipEntryId };
+
+  const details = {
+    goals: entry.goals,
+    issues_addressed: entry.issues,
+    partners_sponsors: entry.partners,
+    methods_technologies: entry.methods,
+    majors_by_category: entry.majorsByCategory,
+    preferred_interests: entry.preferredPrep,
+    advisor_name: entry.advisors.map((a) => a.name).join("; "),
+    advisor_email: entry.advisors.map((a) => a.email).filter(Boolean).join("; "),
+    advisor_department: entry.advisors.map((a) => a.department).filter(Boolean).join("; "),
+    meeting_info: entry.meetingInfo,
   };
 
   const values = {
@@ -275,18 +317,26 @@ function upsertEntry(entry: ParsedVipEntry) {
     majors: setMajors(entry.majors),
     link: entry.link,
     meta: setMeta(meta),
+    details: setDetails(details),
     source: "scraped" as const,
     status: "approved" as const,
     lastVerified: now,
     updatedAt: now,
   };
 
+  let id: number;
+  let action: "inserted" | "updated";
   if (existing) {
     db.update(opportunities).set(values).where(eq(opportunities.id, existing.id)).run();
-    return { action: "updated" as const, id: existing.id };
+    id = existing.id;
+    action = "updated";
+  } else {
+    const result = db.insert(opportunities).values(values).run();
+    id = Number(result.lastInsertRowid);
+    action = "inserted";
   }
-  const result = db.insert(opportunities).values(values).run();
-  return { action: "inserted" as const, id: Number(result.lastInsertRowid) };
+  refreshSearchBlob(id);
+  return { action, id };
 }
 
 async function main() {

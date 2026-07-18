@@ -4,8 +4,8 @@
 // param on its filter type at all). Anything that needs to see
 // pending/rejected rows MUST go through `getForAdmin`, which is named to make
 // misuse from a public route obvious in review.
-import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
-import { db } from "./client.js";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { db, sqlite } from "./client.js";
 import {
   opportunities,
   opportunityTags,
@@ -18,7 +18,7 @@ import {
   type ReportCategory,
   type ReportStatus,
 } from "./schema.js";
-import { getMajors, getMeta, setMajors, setMeta } from "./json-columns.js";
+import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 
 export interface OpportunityDTO {
   id: number;
@@ -28,6 +28,7 @@ export interface OpportunityDTO {
   majors: string[];
   link: string | null;
   meta: Record<string, unknown>;
+  details: Record<string, unknown>;
   source: string;
   status: OpportunityStatus;
   submittedBy: string | null;
@@ -69,6 +70,7 @@ function attachTags(rows: (typeof opportunities.$inferSelect)[]): OpportunityDTO
     majors: getMajors(r.majors),
     link: r.link,
     meta: getMeta(r.meta),
+    details: getDetails(r.details),
     source: r.source,
     status: r.status,
     submittedBy: r.submittedBy,
@@ -79,6 +81,48 @@ function attachTags(rows: (typeof opportunities.$inferSelect)[]): OpportunityDTO
     updatedAt: r.updatedAt,
     tags: tagsByOpportunity.get(r.id) ?? [],
   }));
+}
+
+// Sanitizes a free-text search string into an FTS5 MATCH query: each
+// whitespace-separated term becomes a prefix-matched bareword, ANDed
+// together (implicit FTS5 AND). Returns null if nothing usable survives
+// sanitization (e.g. a punctuation-only query), so callers can fall back.
+function ftsMatchQuery(raw: string): string | null {
+  const terms = raw
+    .split(/\s+/)
+    .map((t) => t.replace(/[^A-Za-z0-9_]/g, ""))
+    .filter(Boolean);
+  if (terms.length === 0) return null;
+  return terms.map((t) => `${t}*`).join(" ");
+}
+
+/**
+ * Full-text search over the `opportunities_fts` index (this project's
+ * SQLite stand-in for a Postgres tsvector column — see search_blob in
+ * schema.ts). Reaches name, description, majors, tag labels, and every
+ * string value nested in `details`, not just description.
+ */
+function searchMatchingIds(query: string): Set<number> {
+  const match = ftsMatchQuery(query);
+  if (match) {
+    const rows = sqlite
+      .prepare(`SELECT rowid as id FROM opportunities_fts WHERE opportunities_fts MATCH ?`)
+      .all(match) as { id: number }[];
+    return new Set(rows.map((r) => r.id));
+  }
+  // No usable FTS terms survived sanitization (e.g. punctuation-only query)
+  // — fall back to a plain substring match so the endpoint still degrades
+  // gracefully instead of returning nothing.
+  const needle = query.toLowerCase();
+  const rows = db
+    .select({ id: opportunities.id, name: opportunities.name, description: opportunities.description })
+    .from(opportunities)
+    .all();
+  return new Set(
+    rows
+      .filter((r) => r.name.toLowerCase().includes(needle) || r.description.toLowerCase().includes(needle))
+      .map((r) => r.id)
+  );
 }
 
 export interface PublicFilters {
@@ -98,18 +142,17 @@ export function getPublic(filters: PublicFilters = {}): OpportunityDTO[] {
   if (filters.type) {
     conditions.push(eq(opportunities.type, filters.type));
   }
-  if (filters.search) {
-    const needle = `%${filters.search}%`;
-    conditions.push(
-      or(like(opportunities.name, needle), like(opportunities.description, needle))!
-    );
-  }
 
   let rows = db
     .select()
     .from(opportunities)
     .where(and(...conditions))
     .all();
+
+  if (filters.search) {
+    const matchIds = searchMatchingIds(filters.search);
+    rows = rows.filter((r) => matchIds.has(r.id));
+  }
 
   if (filters.tagSlugs && filters.tagSlugs.length > 0) {
     const matchIds = new Set(
@@ -142,18 +185,17 @@ export function getForAdmin(filters: AdminFilters = {}): OpportunityDTO[] {
   const conditions = [];
   if (filters.status) conditions.push(eq(opportunities.status, filters.status));
   if (filters.type) conditions.push(eq(opportunities.type, filters.type));
-  if (filters.search) {
-    const needle = `%${filters.search}%`;
-    conditions.push(
-      or(like(opportunities.name, needle), like(opportunities.description, needle))!
-    );
-  }
 
-  const rows = db
+  let rows = db
     .select()
     .from(opportunities)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
     .all();
+
+  if (filters.search) {
+    const matchIds = searchMatchingIds(filters.search);
+    rows = rows.filter((r) => matchIds.has(r.id));
+  }
 
   return attachTags(rows);
 }
@@ -182,6 +224,38 @@ function replaceTagLinks(opportunityId: number, tagSlugs: string[]): void {
   for (const tagId of ids) {
     db.insert(opportunityTags).values({ opportunityId, tagId }).run();
   }
+}
+
+function tagLabelsForOpportunity(opportunityId: number): string[] {
+  return db
+    .select({ label: tags.label })
+    .from(opportunityTags)
+    .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+    .where(eq(opportunityTags.opportunityId, opportunityId))
+    .all()
+    .map((r) => r.label);
+}
+
+/**
+ * Recomputes and persists `search_blob` for one row from its current
+ * name/description/majors/details/tags. The UPDATE below fires the
+ * `opportunities_au` trigger (see migrations/0002), which keeps
+ * `opportunities_fts` in sync — callers never touch the FTS table directly.
+ * Exported so scrapers (e.g. vip.ts, which upserts via raw db calls rather
+ * than these helpers) can keep newly-scraped rows searchable too.
+ */
+export function refreshSearchBlob(opportunityId: number): void {
+  const rows = db.select().from(opportunities).where(eq(opportunities.id, opportunityId)).all();
+  if (rows.length === 0) return;
+  const row = rows[0];
+  const blob = buildSearchBlob({
+    name: row.name,
+    description: row.description,
+    majors: getMajors(row.majors),
+    details: getDetails(row.details),
+    tagLabels: tagLabelsForOpportunity(opportunityId),
+  });
+  db.update(opportunities).set({ searchBlob: blob }).where(eq(opportunities.id, opportunityId)).run();
 }
 
 export interface SubmissionInput {
@@ -215,6 +289,7 @@ export function insertSubmission(input: SubmissionInput): number {
   if (input.tagSlugs && input.tagSlugs.length > 0) {
     replaceTagLinks(id, input.tagSlugs);
   }
+  refreshSearchBlob(id);
   return id;
 }
 
@@ -303,6 +378,7 @@ export function updateOpportunity(
     }
   });
 
+  refreshSearchBlob(id);
   return getByIdForAdmin(id);
 }
 

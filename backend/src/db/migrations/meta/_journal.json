@@ -15,6 +15,13 @@
       "when": 1784382132767,
       "tag": "0001_far_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784383043650,
+      "tag": "0002_confused_miss_america",
+      "breakpoints": true
     }
   ]
 }
