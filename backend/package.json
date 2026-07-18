@@ -10,6 +10,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "smoke": "tsx src/db/smoke-test.ts",
+    "backfill:search": "tsx src/db/backfill-search-blob.ts",
     "scrape:vip": "tsx src/scrapers/vip.ts",
     "scrape:engage": "tsx src/scrapers/engage-scrape.ts",
     "classify:engage": "tsx src/scrapers/engage-classify.ts"
