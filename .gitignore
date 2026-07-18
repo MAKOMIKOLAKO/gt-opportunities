@@ -14,3 +14,4 @@ data/classification-cache/
 dist/
 build/
 *.log
+.claude/scheduled_tasks.lock
