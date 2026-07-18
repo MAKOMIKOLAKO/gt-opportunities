@@ -1,0 +1,74 @@
+name: Engage scrape + classify
+
+# Two jobs, not two separate workflow_run-chained workflows: engage-scrape.ts
+# writes raw org JSON to a local dir (data/raw-cache/engage/) on disk, and
+# engage-classify.ts reads that same local dir. workflow_run triggers a fresh
+# workflow on a fresh runner with none of that state, so it'd need an
+# artifact upload/download anyway to bridge the gap — at which point a
+# `needs:` dependency between two jobs in one workflow (with the same
+# artifact upload/download) is simpler and keeps "classify never runs
+# against an empty/half-populated queue" guaranteed by GitHub Actions itself
+# (the classify job just doesn't start unless scrape-engage succeeds).
+#
+# Like the VIP scraper, the GT Engage directory doesn't change fast enough
+# to need frequent runs — same twice-a-semester cadence, offset a day after
+# the VIP scraper so they don't compete for the runner queue. Adjust by hand
+# if that assumption stops holding.
+on:
+  schedule:
+    - cron: "0 12 6 1 *" # ~Jan 6
+    - cron: "0 12 16 8 *" # ~Aug 16
+  workflow_dispatch: {}
+
+jobs:
+  scrape-engage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: backend
+
+      - name: Run Engage scraper
+        run: npm run scrape:engage --workspace backend
+
+      - name: Upload raw scrape cache
+        uses: actions/upload-artifact@v4
+        with:
+          name: engage-raw-cache
+          path: data/raw-cache/engage/
+          retention-days: 7
+
+  classify-engage:
+    needs: scrape-engage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download raw scrape cache
+        uses: actions/download-artifact@v4
+        with:
+          name: engage-raw-cache
+          path: data/raw-cache/engage/
+
+      - name: Run Engage classification batch
+        run: npm run classify:engage --workspace backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

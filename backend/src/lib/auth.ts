@@ -13,8 +13,8 @@ const SESSION_SECRET = process.env.JWT_SECRET ?? crypto.randomBytes(32).toString
 if (process.env.NODE_ENV === "production" && (!process.env.ADMIN_PASSWORD || !process.env.JWT_SECRET)) {
   console.warn(
     "WARNING: ADMIN_PASSWORD and/or JWT_SECRET not set in production — using a random value generated at " +
-      "startup, which changes on every restart and invalidates admin sessions. Set them in the Railway " +
-      "dashboard env vars (see .env.example)."
+      "startup, which changes on every restart/cold start (on Vercel: every new function instance) and " +
+      "invalidates admin sessions. Set them as real env vars in the Vercel/Railway dashboard (see .env.example)."
   );
 }
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours

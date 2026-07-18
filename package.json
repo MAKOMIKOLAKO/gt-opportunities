@@ -15,5 +15,8 @@
     "scrape:vip": "npm run scrape:vip --workspace backend",
     "scrape:engage": "npm run scrape:engage --workspace backend",
     "classify:engage": "npm run classify:engage --workspace backend"
+  },
+  "dependencies": {
+    "serverless-http": "^4.0.0"
   }
 }

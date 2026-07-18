@@ -1,26 +1,16 @@
+// Long-running entry point (local dev, Railway, or any other host that
+// keeps a process alive). Vercel does NOT use this file — its serverless
+// function entry is /api/index.ts at the repo root, which wraps the same
+// `app` from src/app.ts with serverless-http instead of calling listen().
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express from "express";
-import { publicRouter } from "./routes/public.js";
-import { submitRouter } from "./routes/submit.js";
-import { adminRouter } from "./routes/admin.js";
+import { app } from "./app.js";
 import { ADMIN_USERNAME, ADMIN_PASSWORD } from "./lib/auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const app = express();
 const port = process.env.PORT ?? 3000;
-
-app.use(express.json());
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.use("/api", publicRouter);
-app.use("/api", submitRouter);
-app.use("/api", adminRouter);
 
 app.listen(port, () => {
   console.log(`backend listening on :${port}`);
@@ -35,6 +25,8 @@ app.listen(port, () => {
 
 // Writes the freshly generated admin password into RUN-STATUS.md (gitignored)
 // so it's discoverable without ever being hardcoded/committed in source.
+// Local dev only (see the `else` branch above) — never runs when
+// NODE_ENV=production, so this never fires on Railway/Vercel.
 function writeAdminCredentialsToRunStatus(): void {
   try {
     const runStatusPath = path.resolve(__dirname, "../../RUN-STATUS.md");

@@ -15,16 +15,17 @@
     "classify:engage": "tsx src/scrapers/engage-classify.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.9.1",
+    "@neondatabase/serverless": "^1.1.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.5",
+    "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.30.2",
     "playwright": "^1.61.1",
     "typescript": "^5.7.3"

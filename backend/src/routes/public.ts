@@ -16,7 +16,7 @@ const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 
 export const publicRouter = Router();
 
-publicRouter.get("/opportunities", (req, res) => {
+publicRouter.get("/opportunities", async (req, res) => {
   const { type, search, tags } = req.query;
 
   const typeFilter = typeof type === "string" && VALID_TYPES.includes(type as OpportunityType)
@@ -25,35 +25,35 @@ publicRouter.get("/opportunities", (req, res) => {
   const searchFilter = typeof search === "string" && search.length > 0 ? search : undefined;
   const tagSlugs = typeof tags === "string" && tags.length > 0 ? tags.split(",") : undefined;
 
-  const results = getPublic({ type: typeFilter, search: searchFilter, tagSlugs });
+  const results = await getPublic({ type: typeFilter, search: searchFilter, tagSlugs });
   res.json({ results, count: results.length });
 });
 
-publicRouter.get("/opportunities/:id", (req, res) => {
+publicRouter.get("/opportunities/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  const results = getPublic();
+  const results = await getPublic();
   const result = results.find((r) => r.id === id);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  const reviews = getApprovedReviews(id);
+  const reviews = await getApprovedReviews(id);
   res.json({ result: { ...result, reviews } });
 });
 
-publicRouter.get("/tags", (_req, res) => {
-  const results = getAllTags();
+publicRouter.get("/tags", async (_req, res) => {
+  const results = await getAllTags();
   res.json({ results });
 });
 
 // Public review submission — anonymous, no auth, no rating field. Creates
 // a pending review; only visible publicly once an admin approves it (see
 // getApprovedReviews() in data-access.ts).
-publicRouter.post("/opportunities/:id/reviews", (req, res) => {
+publicRouter.post("/opportunities/:id/reviews", async (req, res) => {
   const opportunityId = Number(req.params.id);
   if (!Number.isInteger(opportunityId)) {
     res.status(404).json({ error: "not_found" });
@@ -61,7 +61,8 @@ publicRouter.post("/opportunities/:id/reviews", (req, res) => {
   }
   // Confirm the opportunity is publicly visible before accepting a review
   // for it (avoids leaking existence of pending/rejected rows via 201s).
-  const opp = getPublic().find((r) => r.id === opportunityId);
+  const publicOpportunities = await getPublic();
+  const opp = publicOpportunities.find((r) => r.id === opportunityId);
   if (!opp) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -83,7 +84,7 @@ publicRouter.post("/opportunities/:id/reviews", (req, res) => {
     return;
   }
 
-  const id = insertReview({
+  const id = await insertReview({
     opportunityId,
     timeCommitment: body.timeCommitment.trim(),
     beforeApplying: body.beforeApplying.trim(),
@@ -96,9 +97,9 @@ publicRouter.post("/opportunities/:id/reviews", (req, res) => {
 // Public dispute/flag path for a specific published review — extends the
 // reports mechanism (reports.reviewId). No auth required (a PI/advisor/club
 // leader flagging a review doesn't need an account).
-publicRouter.post("/reviews/:id/report", (req, res) => {
+publicRouter.post("/reviews/:id/report", async (req, res) => {
   const reviewId = req.params.id;
-  const review = getApprovedReviewById(reviewId);
+  const review = await getApprovedReviewById(reviewId);
   if (!review) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -114,7 +115,7 @@ publicRouter.post("/reviews/:id/report", (req, res) => {
     return;
   }
 
-  const id = insertReport({
+  const id = await insertReport({
     opportunityId: review.opportunityId,
     reviewId,
     category,

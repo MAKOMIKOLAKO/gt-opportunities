@@ -35,7 +35,7 @@ adminRouter.post("/admin/login", (req, res) => {
 // Everything below requires a valid admin session.
 adminRouter.use("/admin", requireAdmin);
 
-adminRouter.get("/admin/opportunities", (req, res) => {
+adminRouter.get("/admin/opportunities", async (req, res) => {
   const { status, type, search } = req.query;
   const statusFilter = typeof status === "string" && VALID_STATUSES.includes(status as OpportunityStatus)
     ? (status as OpportunityStatus)
@@ -45,14 +45,14 @@ adminRouter.get("/admin/opportunities", (req, res) => {
     : undefined;
   const searchFilter = typeof search === "string" && search.length > 0 ? search : undefined;
 
-  const results = getForAdmin({ status: statusFilter, type: typeFilter, search: searchFilter });
+  const results = await getForAdmin({ status: statusFilter, type: typeFilter, search: searchFilter });
   res.json({ results, count: results.length });
 });
 
-adminRouter.post("/admin/opportunities/:id/approve", (req, res) => {
+adminRouter.post("/admin/opportunities/:id/approve", async (req, res) => {
   const id = Number(req.params.id);
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
-  const result = approveOpportunity(id, reviewedBy);
+  const result = await approveOpportunity(id, reviewedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -60,11 +60,11 @@ adminRouter.post("/admin/opportunities/:id/approve", (req, res) => {
   res.json({ result });
 });
 
-adminRouter.post("/admin/opportunities/:id/reject", (req, res) => {
+adminRouter.post("/admin/opportunities/:id/reject", async (req, res) => {
   const id = Number(req.params.id);
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
   const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
-  const result = rejectOpportunity(id, reviewedBy, reason);
+  const result = await rejectOpportunity(id, reviewedBy, reason);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -80,12 +80,12 @@ adminRouter.post("/admin/opportunities/:id/reject", (req, res) => {
 // specific accusation about a named individual's conduct. This is a
 // judgment call per review — there is no keyword/profanity auto-screening
 // and no LLM auto-approve step (see BUILD_NOTES.md).
-adminRouter.get("/admin/reviews", (req, res) => {
+adminRouter.get("/admin/reviews", async (req, res) => {
   const { status } = req.query;
   const statusFilter = typeof status === "string" && VALID_REVIEW_STATUSES.includes(status as ReviewStatus)
     ? (status as ReviewStatus)
     : undefined;
-  const results = getReviewsForAdmin({ status: statusFilter });
+  const results = await getReviewsForAdmin({ status: statusFilter });
   res.json({
     results,
     count: results.length,
@@ -94,10 +94,10 @@ adminRouter.get("/admin/reviews", (req, res) => {
   });
 });
 
-adminRouter.post("/admin/reviews/:id/approve", (req, res) => {
+adminRouter.post("/admin/reviews/:id/approve", async (req, res) => {
   const id = req.params.id;
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
-  const result = approveReview(id, reviewedBy);
+  const result = await approveReview(id, reviewedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -105,10 +105,10 @@ adminRouter.post("/admin/reviews/:id/approve", (req, res) => {
   res.json({ result });
 });
 
-adminRouter.post("/admin/reviews/:id/reject", (req, res) => {
+adminRouter.post("/admin/reviews/:id/reject", async (req, res) => {
   const id = req.params.id;
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
-  const result = rejectReview(id, reviewedBy);
+  const result = await rejectReview(id, reviewedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -120,19 +120,19 @@ adminRouter.post("/admin/reviews/:id/reject", (req, res) => {
 // See BUILD_NOTES.md — this table/queue duplicates in-progress work on
 // worktree-reports-and-vip-search and will need reconciliation when that
 // branch merges.
-adminRouter.get("/admin/reports", (req, res) => {
+adminRouter.get("/admin/reports", async (req, res) => {
   const { status } = req.query;
   const statusFilter = typeof status === "string" && VALID_REPORT_STATUSES.includes(status as ReportStatus)
     ? (status as ReportStatus)
     : undefined;
-  const results = getReportsForAdmin({ status: statusFilter });
+  const results = await getReportsForAdmin({ status: statusFilter });
   res.json({ results, count: results.length });
 });
 
-adminRouter.post("/admin/reports/:id/resolve", (req, res) => {
+adminRouter.post("/admin/reports/:id/resolve", async (req, res) => {
   const id = Number(req.params.id);
   const resolvedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
-  const result = resolveReport(id, resolvedBy);
+  const result = await resolveReport(id, resolvedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
@@ -140,7 +140,7 @@ adminRouter.post("/admin/reports/:id/resolve", (req, res) => {
   res.json({ result });
 });
 
-adminRouter.patch("/admin/opportunities/:id", (req, res) => {
+adminRouter.patch("/admin/opportunities/:id", async (req, res) => {
   const id = Number(req.params.id);
   const body = req.body ?? {};
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
@@ -157,7 +157,7 @@ adminRouter.patch("/admin/opportunities/:id", (req, res) => {
     return;
   }
 
-  const result = updateOpportunity(
+  const result = await updateOpportunity(
     id,
     {
       name: body.name,

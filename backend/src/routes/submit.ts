@@ -9,7 +9,7 @@ const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 
 export const submitRouter = Router();
 
-submitRouter.post("/opportunities/submit", (req, res) => {
+submitRouter.post("/opportunities/submit", async (req, res) => {
   const body = req.body ?? {};
   const details: string[] = [];
 
@@ -28,7 +28,7 @@ submitRouter.post("/opportunities/submit", (req, res) => {
     return;
   }
 
-  const id = insertSubmission({
+  const id = await insertSubmission({
     type: body.type,
     name: body.name,
     description: body.description,
