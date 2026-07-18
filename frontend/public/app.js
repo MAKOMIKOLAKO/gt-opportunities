@@ -680,8 +680,15 @@ function wireEvents() {
     if (!node) return;
     // Modal backdrops close on click, but not when the click originated
     // inside the modal card itself (data-stop-close) — e.g. clicking a
-    // <select> inside the flag form shouldn't dismiss the modal.
-    if ((node.dataset.action === "close-review-form" || node.dataset.action === "close-flag-form") && e.target.closest("[data-stop-close]")) {
+    // <select> inside the flag form shouldn't dismiss the modal. This only
+    // applies when the closest [data-action] is the backdrop itself — the
+    // Cancel/exit buttons live inside data-stop-close too, and must still
+    // close the modal when clicked directly.
+    if (
+      (node.dataset.action === "close-review-form" || node.dataset.action === "close-flag-form") &&
+      node.classList.contains("review-form-modal-backdrop") &&
+      e.target.closest("[data-stop-close]")
+    ) {
       return;
     }
     switch (node.dataset.action) {
