@@ -1,0 +1,19 @@
+{
+  "name": "gt-opportunity-finder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "migrate": "npm run migrate --workspace backend",
+    "seed:tags": "npm run seed:tags --workspace backend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "scrape:vip": "npm run scrape:vip --workspace backend",
+    "scrape:engage": "npm run scrape:engage --workspace backend",
+    "classify:engage": "npm run classify:engage --workspace backend"
+  }
+}
