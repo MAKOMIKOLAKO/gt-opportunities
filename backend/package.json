@@ -9,12 +9,13 @@
     "seed:tags": "tsx src/db/seed-tags.ts",
     "dev": "tsx watch src/index.ts",
     "smoke": "tsx src/db/smoke-test.ts",
-    "scrape:vip": "echo 'not yet implemented' && exit 0",
-    "scrape:engage": "echo 'not yet implemented' && exit 0",
-    "classify:engage": "echo 'not yet implemented' && exit 0"
+    "scrape:vip": "tsx src/scrapers/vip.ts",
+    "scrape:engage": "tsx src/scrapers/engage-scrape.ts",
+    "classify:engage": "tsx src/scrapers/engage-classify.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.9.1",
+    "cheerio": "^1.2.0",
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2"
   },
