@@ -43,12 +43,6 @@ function computeDiscipline(majors) {
   return "Multidisciplinary";
 }
 
-function statusColors(status) {
-  if (status === "Rolling") return { bg: "var(--status-rolling-bg)", fg: "var(--status-rolling-fg)" };
-  if (status === "Closed") return { bg: "var(--status-closed-bg)", fg: "var(--status-closed-fg)" };
-  return { bg: "var(--status-open-bg)", fg: "var(--status-open-fg)" };
-}
-
 function initials(name) {
   const words = (name || "").replace(/^VIP:\s*/i, "").trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "??";
@@ -70,7 +64,6 @@ function detailFields(opp) {
   const details = opp.details || {};
   const advisor = Array.isArray(meta.advisors) && meta.advisors.length ? meta.advisors[0] : null;
   return {
-    commitment: meta.commitment || meta.hoursPerWeek || "—",
     creditPay: meta.creditPay || meta.pay || (opp.type === "vip" ? "Credit (VIP course)" : "—"),
     lead: meta.lead || meta.facultyLead || (advisor ? advisor.name : null) || details.advisor_name || "—",
     meets: meta.meets || meta.meetingInfo || details.meeting_info || "—",
@@ -199,16 +192,11 @@ function renderFooter() {
 function decorateOrg(opp) {
   const type = TYPE_META[opp.type] || { label: opp.type, color: "#54585A" };
   const discipline = computeDiscipline(opp.majors);
-  const status = "Open"; // no reliable "accepting applications" signal in the data model
-  const sc = statusColors(status);
   return {
     ...opp,
     typeLabel: type.label,
     iconColor: type.color,
     discipline,
-    status,
-    statusBg: sc.bg,
-    statusFg: sc.fg,
     initials: initials(opp.name),
   };
 }
@@ -285,11 +273,10 @@ function renderCardsInto(orgs) {
     container.innerHTML = `
       <div class="org-list">
         <div class="org-list-head">
-          <div>Name</div><div>Type</div><div>Discipline</div><div>Commitment</div><div>Status</div>
+          <div>Name</div><div>Type</div><div>Discipline</div>
         </div>
         ${filtered
           .map((o) => {
-            const d = detailFields(o);
             return `
             <button class="org-list-row" data-action="open-detail" data-id="${o.id}">
               <div class="org-list-name">
@@ -298,8 +285,6 @@ function renderCardsInto(orgs) {
               </div>
               <div class="org-list-cell type">${escapeHtml(o.typeLabel)}</div>
               <div class="org-list-cell discipline">${escapeHtml(o.discipline)}</div>
-              <div class="org-list-cell commitment">${escapeHtml(d.commitment)}</div>
-              <div><span class="status-pill" style="background:${o.statusBg};color:${o.statusFg}">${o.status}</span></div>
             </button>
           `;
           })
@@ -317,7 +302,6 @@ function renderCardsInto(orgs) {
         <button class="org-card" data-action="open-detail" data-id="${o.id}">
           <div class="org-card-top">
             <div class="org-icon" style="background:${o.iconColor}">${o.initials}</div>
-            <span class="status-pill" style="background:${o.statusBg};color:${o.statusFg}">${o.status}</span>
           </div>
           <div>
             <div class="org-card-name">${escapeHtml(o.name)}</div>
@@ -373,7 +357,6 @@ async function loadDetail(id) {
           <div class="detail-header-text">
             <div class="detail-title-row">
               <h1>${escapeHtml(opp.name)}</h1>
-              <span class="status-pill" style="background:${opp.statusBg};color:${opp.statusFg}">${opp.status}</span>
             </div>
             <div class="detail-sub">${escapeHtml(opp.typeLabel)} &middot; ${escapeHtml(opp.discipline)}</div>
           </div>
@@ -382,7 +365,6 @@ async function loadDetail(id) {
         <p class="detail-desc">${escapeHtml(opp.description || "")}</p>
 
         <div class="detail-info-grid">
-          <div><div class="detail-info-label">Commitment</div><div class="detail-info-value">${escapeHtml(d.commitment)}</div></div>
           <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
           <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
           <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
