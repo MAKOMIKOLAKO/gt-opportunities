@@ -6,22 +6,22 @@ name: Embeddings backfill
 # NULL`, so re-running is cheap once the initial backlog is cleared — rows
 # that already have an embedding are skipped, not recomputed. Rows edited
 # through the app (admin approve/edit, scrapers) are re-embedded inline at
-# write time (see reembedAndRecompute() in data-access.ts), so this workflow
-# exists to catch anything that landed WITHOUT going through that path —
-# most commonly the very first backfill against pre-existing data, or any
-# row whose embed call failed inline and was never retried.
+# write time (see reembedAndRecompute() in data-access.ts), and vip-scraper.yml
+# / engage-pipeline.yml now both pass OPENAI_API_KEY so that inline re-embed
+# actually succeeds in CI instead of silently no-oping. This workflow is a
+# manual safety net only — for the model-migration backfill (see migration
+# 0004) or any row whose inline embed call failed and was never retried —
+# not a recurring job, since there's no ongoing backlog for it to clear in
+# steady state.
 on:
   workflow_dispatch: {} # ad-hoc full backfill
-  schedule:
-    - cron: "17 9 * * *" # nightly, ~4:17am ET / 5:17am EDT
 
-# Two triggers can land close together (a manual run kicked off while the
-# nightly cron is also due). Don't cancel an in-flight run — the backfill
-# is a straightforward per-row SELECT-then-UPDATE with no shared mutable
-# state beyond each row's own `embedding` column, so two runs overlapping
-# just means some rows get (harmlessly) picked up twice, never a
-# corrupted write. `cancel-in-progress: false` queues the second run
-# instead of killing the first mid-backfill.
+# Guards against a manual run being kicked off twice in quick succession.
+# The backfill is a straightforward per-row SELECT-then-UPDATE with no
+# shared mutable state beyond each row's own `embedding` column, so two
+# runs overlapping just means some rows get (harmlessly) picked up twice,
+# never a corrupted write. `cancel-in-progress: false` queues the second
+# run instead of killing the first mid-backfill.
 concurrency:
   group: embeddings-backfill
   cancel-in-progress: false

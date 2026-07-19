@@ -31,6 +31,7 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
   "source": "scraped",
   "status": "approved",
   "submittedBy": null,
+  "iconUrl": null,
   "reviewedBy": null,
   "reviewedAt": null,
   "lastVerified": "2026-07-01",
@@ -43,6 +44,14 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
 `type` is one of `vip | lab | club`. `source` is one of
 `scraped | curated | user_submitted`. `status` is one of
 `approved | pending | rejected`.
+
+`iconUrl` (org profile icon feature) is the live, publicly-served icon URL,
+or `null` if none has been approved yet — frontend falls back to a
+colored-initials placeholder when it's null. There is also an admin-only
+`iconPendingUrl` field (a submitted-but-not-yet-approved replacement icon)
+that is **only** present on admin responses (`getByIdForAdmin`/the pending
+icons queue below) — it is never included in any public response, including
+`GET /api/opportunities` and `GET /api/opportunities/:id`.
 
 `details` is a free-form JSON object (jsonb-equivalent, like `meta`) for
 type-specific structured fields that don't apply across vip/lab/club rows —
@@ -101,6 +110,62 @@ dispute against a specific review (as opposed to a general report about the
 opportunity itself); `opportunityId` is still carried for context in that
 case. `reporterContact` is optional and never required.
 
+### Link shape (`LinkDTO`, Additional org links)
+
+Additional org links beyond "how to apply" — `opportunities.link` remains
+the single primary how-to-apply link; this is a proper child table for
+everything else (apply-adjacent, homepage, social, other), following the
+same pending -> admin-review -> approved lifecycle as reviews/reports.
+
+```json
+{
+  "id": 1,
+  "opportunityId": 1,
+  "label": "Team Instagram",
+  "url": "https://instagram.com/example",
+  "type": "social",
+  "status": "approved",
+  "submittedBy": null,
+  "createdAt": "2026-07-18 13:44:53",
+  "reviewedBy": null,
+  "reviewedAt": null
+}
+```
+
+`type` is one of `apply | homepage | social | other` — a plain text column
+with app-level validation, deliberately extensible later. `status` is one
+of `pending | approved | rejected`.
+
+### Suggested edit shape (`SuggestedEditDTO`, Addition: suggest edits on existing listings)
+
+A proposed correction to a single field on an existing opportunity, awaiting
+admin review.
+
+```json
+{
+  "id": 1,
+  "opportunityId": 1,
+  "field": "description",
+  "oldValue": "Old description text",
+  "newValue": "Corrected description text",
+  "submittedBy": "gtusername@gatech.edu",
+  "status": "pending",
+  "createdAt": "2026-07-19 09:00:00",
+  "reviewedBy": null,
+  "reviewedAt": null
+}
+```
+
+`field` is one of `name | description | link | majors` — a fixed
+server-side allowlist (`SUGGESTABLE_FIELDS` in
+`backend/src/db/data-access.ts`); arbitrary/internal fields (`status`,
+`source`, `meta`, `id`, etc.) can never be suggested. `oldValue` is a
+server-captured snapshot of the field's value at submission time (never
+client-supplied) — nullable because `link` itself is nullable. For the
+`majors` field, both `oldValue` and `newValue` are the JSON-serialized array
+string, matching how `majors` is stored on the opportunity row. `status` is
+one of `pending | approved | rejected`.
+
 ---
 
 ## Public endpoints
@@ -136,14 +201,17 @@ Fetch a single approved opportunity by id.
 Response `200`: `{ "result": Opportunity }` — `Opportunity` here includes a
 `reviews` array (Addition 3): approved reviews for this opportunity only,
 most-recent-first. Backed by `getApprovedReviews()` — structurally cannot
-include pending/rejected reviews.
+include pending/rejected reviews. It also includes a `links` array
+(additional org links): approved links only, `apply`-typed rows first, then
+creation order. Backed by `getApprovedLinks()` — structurally cannot
+include pending/rejected links.
 
 Also includes a `relatedOrgs` array (Related Organizations feature):
 0-8 other approved `Opportunity` objects (same shape as above, minus
 `reviews`/`relatedOrgs` themselves — no nesting), ordered most-related
 first. Backed by a precomputed cache (`related_opportunities` table),
 never computed live per request — see `BUILD_NOTES.md`. Matching is
-embedding-based (cosine similarity over `text-embedding-3-small`
+embedding-based (cosine similarity over `text-embedding-3-large`
 embeddings of name + description + tag labels) with a small tag-overlap
 boost on top; matching is deliberately **cross-category** — `type`
 (vip/lab/club) is never used as a scoring signal, so a VIP team and an
@@ -196,6 +264,59 @@ Response `400`: `{ "error": "validation_error", "details": [...] }`
 Response `404`: `{ "error": "not_found" }` if `:id` isn't a currently
 approved review.
 
+### `POST /api/opportunities/:id/links`
+
+Public submission of an additional org link (Additional org links). No
+auth. Creates a `status = "pending"` link — never directly visible until
+an admin approves it.
+
+Request body:
+```json
+{
+  "label": "Team Instagram",
+  "url": "https://instagram.com/example",
+  "type": "social",
+  "submittedBy": "optional, e.g. gtusername@gatech.edu"
+}
+```
+`type` is required, one of `apply | homepage | social | other`.
+Response `201`: `{ "result": { "id": 1, "status": "pending" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }`
+Response `404`: `{ "error": "not_found" }` if the opportunity isn't
+publicly visible (approved).
+
+### `POST /api/opportunities/:id/suggest-edit`
+
+Suggest a correction to a single field on an existing, publicly visible
+opportunity (Addition: suggest edits on existing listings). No auth
+required. Creates a `status = "pending"` row in the Suggested Edits admin
+queue — never applied to the live listing until an admin approves it.
+
+Request body:
+```json
+{
+  "field": "description",
+  "newValue": "Corrected description text",
+  "submittedBy": "gtusername@gatech.edu"
+}
+```
+`field` is required and must be one of `name | description | link | majors`
+(server-enforced allowlist — any other value is rejected, not silently
+mapped). For `field: "majors"`, `newValue` must be the JSON-serialized array
+string (e.g. `"[\"CS\",\"ME\"]"`), matching the stored representation.
+`submittedBy` is optional, free text (e.g. an email), never validated as an
+identity.
+
+`oldValue` is NOT accepted from the client — the server reads the field's
+current value itself before inserting the suggestion, and rejects the
+request as a no-op if `newValue` is identical to the current value.
+
+Response `201`: `{ "result": { "id": 1, "status": "pending" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }` — bad/missing
+`field`, missing `newValue`, or `newValue` identical to the current value.
+Response `404`: `{ "error": "not_found" }` if the opportunity isn't publicly
+visible (approved).
+
 ### `GET /api/tags`
 
 List the full tag vocabulary (for building filter UI).
@@ -224,15 +345,47 @@ Request body:
   "majors": ["CS"],
   "link": "https://example.com",
   "tagSlugs": ["robotics"],
-  "submittedBy": "gtusername@gatech.edu"
+  "submittedBy": "gtusername@gatech.edu",
+  "links": [
+    { "label": "Team Instagram", "url": "https://instagram.com/example", "type": "social" }
+  ]
 }
 ```
+`links` is optional — an array of additional org links to create alongside
+the opportunity (each becomes a `status = "pending"` row in the same way as
+`POST /api/opportunities/:id/links`). Each entry is validated individually;
+a malformed entry (missing `label`/`url`, or an invalid `type`) is silently
+skipped rather than failing the whole submission.
 
 Response `201`:
 ```json
 { "result": { "id": 42, "status": "pending" } }
 ```
 Response `400`: `{ "error": "validation_error", "details": ["name is required"] }`
+
+### `POST /api/opportunities/:id/icon` (org profile icon feature)
+
+Public submission of a candidate icon/logo URL for an **existing, publicly
+visible (approved)** opportunity — there is no id to attach an icon to until
+an org has been approved, so this only makes sense from the org detail page,
+not the "submit an org" form. Sets `iconPendingUrl` only; never touches the
+live `iconUrl`. Accepts a URL, not a file upload — there's no object storage
+configured in this app.
+
+Request body:
+```json
+{ "url": "https://example.com/logo.png" }
+```
+Validation: `url` required, `https://` only, max 2048 chars, must end in
+`.png|.jpg|.jpeg|.gif|.webp|.svg` (optionally followed by a `?query`). This
+is a best-effort format check, not a fetch-and-verify of the actual image
+content/type — see `BUILD_NOTES.md` for why (SSRF considerations).
+
+Response `201`: `{ "result": { "id": 42, "iconPendingUrl": "https://example.com/logo.png" } }`
+Response `400`: `{ "error": "validation_error", "details": ["url must be an https:// link ending in .png, .jpg, .jpeg, .gif, .webp, or .svg"] }`
+Response `404`: `{ "error": "not_found" }` — same "public callers can't
+distinguish pending/rejected from doesn't-exist" convention as other public
+routes.
 
 ---
 
@@ -304,6 +457,41 @@ Response `200`: `{ "result": Opportunity }`
 Response `404`: `{ "error": "not_found" }`
 Response `400`: `{ "error": "validation_error", "details": ["..."] }`
 
+### `GET /api/admin/icons/pending` (org profile icon feature)
+
+List opportunities with a pending icon submission awaiting review
+(`iconPendingUrl IS NOT NULL`). Backed by `getPendingIcons()`.
+
+Response `200`:
+```json
+{
+  "results": [
+    { "id": 1, "name": "Test Robotics Club", "iconUrl": null, "iconPendingUrl": "https://example.com/logo.png" }
+  ],
+  "count": 1
+}
+```
+
+### `POST /api/admin/opportunities/:id/icon/approve`
+
+Promotes the pending icon to live: copies `iconPendingUrl` → `iconUrl`,
+clears `iconPendingUrl`, stamps `updatedAt`. Does **not** touch the
+opportunity's own `reviewedBy`/`reviewedAt` — those track the separate
+opportunity approve/reject lifecycle.
+
+Request body: `{}` (no body required)
+Response `200`: `{ "result": Opportunity }` (admin variant, includes `iconPendingUrl: null`)
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/opportunities/:id/icon/reject`
+
+Discards the pending icon submission (`iconPendingUrl = null`) without
+touching the live `iconUrl`.
+
+Request body: `{}` (no body required)
+Response `200`: `{ "result": Opportunity }`
+Response `404`: `{ "error": "not_found" }`
+
 ### `GET /api/admin/reviews?status=pending` (Addition 3)
 
 List reviews for the moderation queue, each linked to its opportunity via
@@ -373,6 +561,81 @@ Response `200`: `{ "results": [ /* Report[] */ ], "count": 1 }`
 Marks a report `resolved`, stamping `resolvedBy`/`resolvedAt`.
 
 Response `200`: `{ "result": Report }`
+Response `404`: `{ "error": "not_found" }`
+
+### `GET /api/admin/links?status=pending` (Additional org links)
+
+List additional-org-link submissions for the moderation queue, each linked
+to its opportunity via `opportunityId` **and** `opportunityName`. Backed by
+`getLinksForAdmin()`. `status` optional (`pending | approved | rejected`);
+omitted = all statuses.
+
+Response `200`: `{ "results": [ /* (Link & { opportunityName }) [] */ ], "count": 1 }`
+
+### `POST /api/admin/links/:id/approve`
+
+Marks a link `approved`, stamping `reviewedBy`/`reviewedAt`. Makes it
+visible on the opportunity's public detail response (`links` array).
+
+Response `200`: `{ "result": Link }`
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/links/:id/reject`
+
+Marks a link `rejected`, stamping `reviewedBy`/`reviewedAt`. Never appears
+in any public response.
+
+Response `200`: `{ "result": Link }`
+Response `404`: `{ "error": "not_found" }`
+
+### `GET /api/admin/suggested-edits?status=pending` (Addition: suggest edits on existing listings)
+
+List suggested edits for the moderation queue, each linked to its
+opportunity via `opportunityId` **and** `opportunityName` (same shape as the
+reviews queue — no second lookup needed to show what's being edited).
+Backed by `getSuggestedEditsForAdmin()`. `status` optional
+(`pending | approved | rejected`); omitted = all statuses.
+
+Response `200`:
+```json
+{
+  "results": [
+    {
+      "id": 1,
+      "opportunityId": 1,
+      "opportunityName": "Test Robotics Club",
+      "field": "description",
+      "oldValue": "Old description text",
+      "newValue": "Corrected description text",
+      "submittedBy": "gtusername@gatech.edu",
+      "status": "pending",
+      "createdAt": "2026-07-19 09:00:00",
+      "reviewedBy": null,
+      "reviewedAt": null
+    }
+  ],
+  "count": 1
+}
+```
+
+### `POST /api/admin/suggested-edits/:id/approve`
+
+Approves a pending suggested edit: writes `newValue` into the live
+opportunity's `field` column (for `majors`, parses the JSON-serialized array
+and re-serializes through `setMajors`), stamps the suggested-edit row
+`approved`/`reviewedBy`/`reviewedAt`, and re-runs the opportunity's search
+index refresh (name/description/majors all feed search). Both writes happen
+in one transaction.
+
+Response `200`: `{ "result": SuggestedEdit }`
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/suggested-edits/:id/reject`
+
+Marks a suggested edit `rejected`, stamping `reviewedBy`/`reviewedAt`. No
+write to the live opportunity row.
+
+Response `200`: `{ "result": SuggestedEdit }`
 Response `404`: `{ "error": "not_found" }`
 
 ---

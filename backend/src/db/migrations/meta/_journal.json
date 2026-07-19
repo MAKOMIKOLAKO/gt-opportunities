@@ -12,8 +12,29 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1784434871394,
-      "tag": "0001_certain_vindicator",
+      "when": 1784434837752,
+      "tag": "0001_rainy_gauntlet",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784436028629,
+      "tag": "0002_volatile_lady_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784436452484,
+      "tag": "0003_little_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784469699123,
+      "tag": "0004_spooky_polaris",
       "breakpoints": true
     }
   ]

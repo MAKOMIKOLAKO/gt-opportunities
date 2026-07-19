@@ -43,6 +43,18 @@ function computeDiscipline(majors) {
   return "Multidisciplinary";
 }
 
+// Renders the org-icon element: an <img> against the type color background
+// when `iconUrl` is set (falls back to initials text if the image URL 404s
+// or fails to load — see the onerror handler), otherwise the existing
+// colored-initials placeholder.
+function renderOrgIcon(o, extraClass) {
+  const cls = extraClass ? `org-icon ${extraClass}` : "org-icon";
+  if (o.iconUrl) {
+    return `<div class="${cls}" style="background:${o.iconColor}"><img src="${escapeAttr(o.iconUrl)}" alt="" loading="lazy" data-fallback="${escapeAttr(o.initials)}" onerror="this.parentElement.textContent=this.dataset.fallback" /></div>`;
+  }
+  return `<div class="${cls}" style="background:${o.iconColor}">${o.initials}</div>`;
+}
+
 function initials(name) {
   const words = (name || "").replace(/^VIP:\s*/i, "").trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "??";
@@ -91,6 +103,10 @@ const state = {
   lastSubmittedName: "",
   reviewFormOpportunityId: null,
   flagReviewId: null,
+  iconFormOpportunityId: null,
+  iconSubmitMessage: "",
+  suggestEditFormOpportunityId: null,
+  suggestEditMessage: "",
 };
 
 let searchDebounce = null;
@@ -134,6 +150,31 @@ async function submitReview(opportunityId, body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+// Field picker for "Suggest an edit" — matches the server-side allowlist
+// exactly (backend/src/routes/public.ts SUGGESTABLE_FIELDS). `majors` is
+// entered as a comma-separated list in the UI and converted to the
+// JSON-serialized array string the API expects before posting.
+const SUGGEST_EDIT_FIELDS = [
+  { key: "name", label: "Name" },
+  { key: "description", label: "Description" },
+  { key: "link", label: "Link" },
+  { key: "majors", label: "Majors sought" },
+];
+
+async function submitSuggestEdit(opportunityId, field, newValueRaw) {
+  const newValue = field === "majors"
+    ? JSON.stringify(newValueRaw.split(",").map((m) => m.trim()).filter(Boolean))
+    : newValueRaw;
+  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/suggest-edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ field, newValue }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
@@ -301,7 +342,7 @@ function renderCardsInto(orgs) {
           (o) => `
         <button class="org-card" data-action="open-detail" data-id="${o.id}">
           <div class="org-card-top">
-            <div class="org-icon" style="background:${o.iconColor}">${o.initials}</div>
+            ${renderOrgIcon(o)}
           </div>
           <div>
             <div class="org-card-name">${escapeHtml(o.name)}</div>
@@ -353,7 +394,7 @@ async function loadDetail(id) {
     container.innerHTML = `
       <div class="detail-card">
         <div class="detail-header">
-          <div class="org-icon lg" style="background:${opp.iconColor}">${opp.initials}</div>
+          ${renderOrgIcon(opp, "lg")}
           <div class="detail-header-text">
             <div class="detail-title-row">
               <h1>${escapeHtml(opp.name)}</h1>
@@ -365,8 +406,14 @@ async function loadDetail(id) {
         <p class="detail-desc">${escapeHtml(opp.description || "")}</p>
 
         <div class="detail-info-grid">
+          ${
+            opp.type === "club"
+              ? ""
+              : `
           <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
           <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+          `
+          }
           <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
         </div>
 
@@ -382,8 +429,16 @@ async function loadDetail(id) {
 
         <div class="detail-footer">
           ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
+          <div class="detail-footer-actions">
+            <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+            <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+          </div>
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
+        ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
+        ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
+
+        ${renderLinksBlock(opp)}
 
         ${renderReviewsBlock(opp)}
       </div>
@@ -393,6 +448,38 @@ async function loadDetail(id) {
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
+}
+
+// ---------------------------------------------------------------------
+// Rendering — detail page utility actions ("Submit an icon" / "Suggest an
+// edit"). Both are secondary actions that live together in .detail-footer
+// next to "How to Apply" rather than one being buried in its own row below.
+//
+// Icon submission is scoped to the detail page only, not the "submit an
+// org" form — a brand new org submission has no id until an admin
+// approves it, so there's nothing for /api/opportunities/:id/icon to
+// attach to yet. (See BUILD_NOTES.md for this as a documented assumption,
+// not an oversight.)
+// ---------------------------------------------------------------------
+
+function renderIconFormModal() {
+  if (!state.iconFormOpportunityId) return "";
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-icon-form">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Submit an icon</h3>
+        <div class="modal-sub">Upload a logo/icon image for this org (PNG, JPG, GIF, WEBP, or SVG, max 2MB). A moderator reviews it before it goes live.</div>
+        <form id="iconForm" data-id="${state.iconFormOpportunityId}">
+          <input type="file" name="icon" required accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" />
+          <div id="iconFormError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-icon-form">Cancel</button>
+            <button type="submit" class="submit-btn">Submit icon</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------
@@ -421,11 +508,80 @@ function renderRelatedOrgsBlock(opp) {
   `;
 }
 
+// ---------------------------------------------------------------------
+// Rendering — additional links
+//
+// `opp.link` (the primary "how to apply" link, rendered as the Apply button
+// above) is separate from this — these are ADDITIONAL org links (apply-
+// adjacent, homepage, social, other) approved via the links moderation
+// queue. Only approved links are ever sent to this client.
+// ---------------------------------------------------------------------
+
+const LINK_TYPE_LABELS = { apply: "Apply", homepage: "Homepage", social: "Social", other: "Link" };
+
+function renderLinksBlock(opp) {
+  const links = opp.links || [];
+  if (links.length === 0) return "";
+  return `
+    <div class="links-block">
+      <div class="detail-tags-label">More links</div>
+      <ul class="links-list">
+        ${links
+          .map(
+            (l) => `
+          <li class="links-list-item">
+            <span class="link-type-badge">${escapeHtml(LINK_TYPE_LABELS[l.type] || l.type)}</span>
+            <a href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>
+          </li>
+        `
+          )
+          .join("")}
+      </ul>
+    </div>
+  `;
+}
+
+async function submitIcon(opportunityId, file) {
+  const formData = new FormData();
+  formData.append("icon", file);
+  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/icon`, {
+    method: "POST",
+    body: formData,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+async function handleIconSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = Number(form.dataset.id);
+  const errorEl = el("#iconFormError");
+  errorEl.innerHTML = "";
+  const file = form.icon.files[0];
+  if (!file) {
+    errorEl.innerHTML = `<div class="form-error">Choose an image file first.</div>`;
+    return;
+  }
+  const btn = form.querySelector("button[type=submit]");
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await submitIcon(opportunityId, file);
+    setState({ iconFormOpportunityId: null, iconSubmitMessage: "Thanks — submitted for moderator review." });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit icon";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
 function renderRelatedOrgCard(o) {
   return `
     <button class="org-card related-org-card" data-action="open-detail" data-id="${o.id}">
       <div class="org-card-top">
-        <div class="org-icon" style="background:${o.iconColor}">${o.initials}</div>
+        ${renderOrgIcon(o)}
       </div>
       <div>
         <div class="org-card-name">${escapeHtml(o.name)}</div>
@@ -436,6 +592,40 @@ function renderRelatedOrgCard(o) {
         ${(o.tags || []).slice(0, 3).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
       </div>
     </button>
+  `;
+}
+
+// ---------------------------------------------------------------------
+// Rendering — suggest an edit
+//
+// Lightweight, unobtrusive "propose a correction" affordance, opened from
+// the "Suggest an edit" button in .detail-footer. Posts to
+// POST /api/opportunities/:id/suggest-edit and lands in the admin
+// "Suggested Edits" queue as a pending row — nothing here touches the live
+// listing directly.
+// ---------------------------------------------------------------------
+
+function renderSuggestEditModal() {
+  if (!state.suggestEditFormOpportunityId) return "";
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-suggest-edit">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Suggest an edit</h3>
+        <form id="suggestEditForm" data-id="${state.suggestEditFormOpportunityId}">
+          <label>Field</label>
+          <select name="field" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:13.5px;margin-bottom:14px;">
+            ${SUGGEST_EDIT_FIELDS.map((f) => `<option value="${f.key}">${escapeHtml(f.label)}</option>`).join("")}
+          </select>
+          <label>Proposed new value</label>
+          <textarea name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
+          <div id="suggestEditError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
+            <button type="submit" class="submit-btn">Submit suggestion</button>
+          </div>
+        </form>
+      </div>
+    </div>
   `;
 }
 
@@ -606,6 +796,13 @@ function renderSubmit() {
             <input type="email" name="email" required placeholder="you@gatech.edu" />
           </div>
         </div>
+        <div class="submit-links-block">
+          <div class="submit-links-head">
+            <label>Additional links <span class="submit-links-hint">(optional — apply link, homepage, socials, etc.)</span></label>
+            <button type="button" class="add-link-row-btn" data-action="add-link-row">+ Add a link</button>
+          </div>
+          <div id="linkRows"></div>
+        </div>
         <div class="submit-callout">
           <span>&#8505;</span><span>Submissions enter a review queue and are checked for accuracy before publishing — expect 3&ndash;5 days.</span>
         </div>
@@ -614,6 +811,33 @@ function renderSubmit() {
       </form>
     </main>
   `;
+}
+
+function linkRowHtml() {
+  return `
+    <div class="link-row">
+      <input type="text" class="link-row-label" placeholder="Label (e.g. Apply Now)" maxlength="200" />
+      <input type="url" class="link-row-url" placeholder="https://..." maxlength="500" />
+      <select class="link-row-type">
+        <option value="apply">Apply</option>
+        <option value="homepage">Homepage</option>
+        <option value="social">Social</option>
+        <option value="other" selected>Other</option>
+      </select>
+      <button type="button" class="remove-link-row-btn" data-action="remove-link-row" aria-label="Remove link">&times;</button>
+    </div>
+  `;
+}
+
+function collectLinkRows(form) {
+  const rows = [...form.querySelectorAll(".link-row")];
+  return rows
+    .map((row) => ({
+      label: row.querySelector(".link-row-label").value.trim(),
+      url: row.querySelector(".link-row-url").value.trim(),
+      type: row.querySelector(".link-row-type").value,
+    }))
+    .filter((r) => r.label && r.url);
 }
 
 async function handleSubmit(e) {
@@ -634,6 +858,7 @@ async function handleSubmit(e) {
     majors: disciplineVal && disciplineVal !== "Multidisciplinary" ? [disciplineVal] : [],
     tagSlugs: resolveTagSlugs(tagsRaw),
     submittedBy: form.email.value.trim() || undefined,
+    links: collectLinkRows(form),
   };
 
   try {
@@ -689,7 +914,14 @@ function render() {
   else if (state.view === "submit") body = renderSubmit();
   else body = renderDirectory();
 
-  app.innerHTML = renderHeader() + body + renderFooter() + renderReviewFormModal() + renderFlagFormModal();
+  app.innerHTML =
+    renderHeader() +
+    body +
+    renderFooter() +
+    renderReviewFormModal() +
+    renderFlagFormModal() +
+    renderIconFormModal() +
+    renderSuggestEditModal();
   wireEvents();
 
   if (state.view === "directory") {
@@ -721,7 +953,10 @@ function wireEvents() {
     // Cancel/exit buttons live inside data-stop-close too, and must still
     // close the modal when clicked directly.
     if (
-      (node.dataset.action === "close-review-form" || node.dataset.action === "close-flag-form") &&
+      (node.dataset.action === "close-review-form" ||
+        node.dataset.action === "close-flag-form" ||
+        node.dataset.action === "close-icon-form" ||
+        node.dataset.action === "close-suggest-edit") &&
       node.classList.contains("review-form-modal-backdrop") &&
       e.target.closest("[data-stop-close]")
     ) {
@@ -747,7 +982,14 @@ function wireEvents() {
         setState({ query: "", typeFilter: "", discipline: "All Disciplines" });
         break;
       case "open-detail":
-        setState({ view: "detail", selectedId: Number(node.dataset.id) });
+        setState({
+          view: "detail",
+          selectedId: Number(node.dataset.id),
+          suggestEditFormOpportunityId: null,
+          suggestEditMessage: "",
+          iconFormOpportunityId: null,
+          iconSubmitMessage: "",
+        });
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
@@ -765,6 +1007,30 @@ function wireEvents() {
       case "close-flag-form":
         if (e.target !== node && node.dataset.stopClose) return;
         setState({ flagReviewId: null });
+        break;
+      case "add-link-row": {
+        const container = el("#linkRows");
+        if (container) container.insertAdjacentHTML("beforeend", linkRowHtml());
+        break;
+      }
+      case "remove-link-row": {
+        const row = node.closest(".link-row");
+        if (row) row.remove();
+        break;
+      }
+      case "open-icon-form":
+        setState({ iconFormOpportunityId: Number(node.dataset.id), iconSubmitMessage: "" });
+        break;
+      case "close-icon-form":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ iconFormOpportunityId: null });
+        break;
+      case "open-suggest-edit":
+        setState({ suggestEditFormOpportunityId: Number(node.dataset.id), suggestEditMessage: "" });
+        break;
+      case "close-suggest-edit":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ suggestEditFormOpportunityId: null });
         break;
     }
   });
@@ -791,6 +1057,10 @@ function wireEvents() {
       handleReviewSubmit(e);
     } else if (e.target.id === "flagForm") {
       handleFlagSubmit(e);
+    } else if (e.target.id === "iconForm") {
+      handleIconSubmit(e);
+    } else if (e.target.id === "suggestEditForm") {
+      handleSuggestEditSubmit(e);
     }
   });
 }
@@ -833,6 +1103,25 @@ async function handleFlagSubmit(e) {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Submit flag";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleSuggestEditSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = Number(form.dataset.id);
+  const btn = form.querySelector("button[type=submit]");
+  const errorEl = el("#suggestEditError");
+  errorEl.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await submitSuggestEdit(opportunityId, form.field.value, form.newValue.value.trim());
+    setState({ suggestEditFormOpportunityId: null, suggestEditMessage: "Thanks — your suggestion was submitted for review." });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit suggestion";
     errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }

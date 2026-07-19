@@ -12,13 +12,31 @@ import {
   rejectReview,
   getReportsForAdmin,
   resolveReport,
+  getPendingIcons,
+  approveIcon,
+  rejectIcon,
+  getLinksForAdmin,
+  approveLink,
+  rejectLink,
+  getSuggestedEditsForAdmin,
+  approveSuggestedEdit,
+  rejectSuggestedEdit,
 } from "../db/data-access.js";
-import type { OpportunityStatus, OpportunityType, ReviewStatus, ReportStatus } from "../db/schema.js";
+import type {
+  OpportunityStatus,
+  OpportunityType,
+  ReviewStatus,
+  ReportStatus,
+  LinkStatus,
+  SuggestedEditStatus,
+} from "../db/schema.js";
 
 const VALID_STATUSES: OpportunityStatus[] = ["approved", "pending", "rejected"];
 const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 const VALID_REVIEW_STATUSES: ReviewStatus[] = ["pending", "approved", "rejected"];
 const VALID_REPORT_STATUSES: ReportStatus[] = ["open", "resolved"];
+const VALID_LINK_STATUSES: LinkStatus[] = ["pending", "approved", "rejected"];
+const VALID_SUGGESTED_EDIT_STATUSES: SuggestedEditStatus[] = ["pending", "approved", "rejected"];
 
 export const adminRouter = Router();
 
@@ -133,6 +151,103 @@ adminRouter.post("/admin/reports/:id/resolve", async (req, res) => {
   const id = Number(req.params.id);
   const resolvedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
   const result = await resolveReport(id, resolvedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Org profile icon review queue (icon submission feature) ----
+// Same pending -> admin-review -> approved lifecycle as the opportunities
+// queue above, scoped to the iconUrl/iconPendingUrl pair.
+adminRouter.get("/admin/icons/pending", async (_req, res) => {
+  const results = await getPendingIcons();
+  res.json({ results, count: results.length });
+});
+
+adminRouter.post("/admin/opportunities/:id/icon/approve", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await approveIcon(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+adminRouter.post("/admin/opportunities/:id/icon/reject", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await rejectIcon(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Links moderation queue (additional org links beyond "how to apply") ----
+adminRouter.get("/admin/links", async (req, res) => {
+  const { status } = req.query;
+  const statusFilter = typeof status === "string" && VALID_LINK_STATUSES.includes(status as LinkStatus)
+    ? (status as LinkStatus)
+    : undefined;
+  const results = await getLinksForAdmin({ status: statusFilter });
+  res.json({ results, count: results.length });
+});
+
+adminRouter.post("/admin/links/:id/approve", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await approveLink(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+adminRouter.post("/admin/links/:id/reject", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await rejectLink(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Suggested edits moderation queue ----
+// Mirrors the reviews queue shape: opportunityName is joined in so the
+// queue never needs a second lookup to show what's being edited.
+adminRouter.get("/admin/suggested-edits", async (req, res) => {
+  const { status } = req.query;
+  const statusFilter =
+    typeof status === "string" && VALID_SUGGESTED_EDIT_STATUSES.includes(status as SuggestedEditStatus)
+      ? (status as SuggestedEditStatus)
+      : undefined;
+  const results = await getSuggestedEditsForAdmin({ status: statusFilter });
+  res.json({ results, count: results.length });
+});
+
+adminRouter.post("/admin/suggested-edits/:id/approve", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await approveSuggestedEdit(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+adminRouter.post("/admin/suggested-edits/:id/reject", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await rejectSuggestedEdit(id, reviewedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
