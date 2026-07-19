@@ -423,13 +423,16 @@ async function loadDetail(id) {
 
         <div class="detail-footer">
           ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
-          <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+          <div class="detail-footer-actions">
+            <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+            <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+          </div>
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
         ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
+        ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
 
         ${renderLinksBlock(opp)}
-        ${renderDetailUtilityRow(opp)}
 
         ${renderReviewsBlock(opp)}
       </div>
@@ -442,13 +445,9 @@ async function loadDetail(id) {
 }
 
 // ---------------------------------------------------------------------
-// Rendering — detail page utility actions ("Submit an icon"). Kept as a
-// small, unobtrusive text link rather than a full inline section — this is
-// a rare, incidental action, not part of the normal browsing flow, so it
-// opens a modal instead of eating page real estate. ("Suggest an edit" used
-// to live here too, but that's a primary action per the design spec — see
-// Campus Opportunity Finder.dc.html's "Propose an edit" button — so it now
-// lives in .detail-footer next to "How to Apply" instead of being buried.)
+// Rendering — detail page utility actions ("Submit an icon" / "Suggest an
+// edit"). Both are secondary actions that live together in .detail-footer
+// next to "How to Apply" rather than one being buried in its own row below.
 //
 // Icon submission is scoped to the detail page only, not the "submit an
 // org" form — a brand new org submission has no id until an admin
@@ -456,15 +455,6 @@ async function loadDetail(id) {
 // attach to yet. (See BUILD_NOTES.md for this as a documented assumption,
 // not an oversight.)
 // ---------------------------------------------------------------------
-
-function renderDetailUtilityRow(opp) {
-  return `
-    <div class="detail-utility-row">
-      <button class="utility-link-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
-    </div>
-    ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
-  `;
-}
 
 function renderIconFormModal() {
   if (!state.iconFormOpportunityId) return "";
@@ -603,7 +593,7 @@ function renderRelatedOrgCard(o) {
 // Rendering — suggest an edit
 //
 // Lightweight, unobtrusive "propose a correction" affordance, opened from
-// the small utility link in renderDetailUtilityRow(). Posts to
+// the "Suggest an edit" button in .detail-footer. Posts to
 // POST /api/opportunities/:id/suggest-edit and lands in the admin
 // "Suggested Edits" queue as a pending row — nothing here touches the live
 // listing directly.
