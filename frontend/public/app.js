@@ -457,10 +457,9 @@ function renderIconSubmitBlock(opp) {
   return `
     <div class="icon-submit-block">
       <div class="detail-tags-label">Submit an icon</div>
-      <div class="icon-submit-block-sub">Suggest a logo/icon image URL for this org. A moderator reviews it before it goes live.</div>
+      <div class="icon-submit-block-sub">Upload a logo/icon image for this org (PNG, JPG, GIF, WEBP, or SVG, max 2MB). A moderator reviews it before it goes live.</div>
       <form id="iconForm" class="icon-submit-form" data-id="${opp.id}">
-        <input type="url" name="iconUrl" required maxlength="2048"
-          placeholder="https://example.com/logo.png" />
+        <input type="file" name="icon" required accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" />
         <button type="submit" class="submit-btn">Submit icon</button>
       </form>
       ${statusMarkup}
@@ -527,11 +526,12 @@ function renderLinksBlock(opp) {
   `;
 }
 
-async function submitIcon(opportunityId, url) {
+async function submitIcon(opportunityId, file) {
+  const formData = new FormData();
+  formData.append("icon", file);
   const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/icon`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: formData,
   });
   const data = await res.json();
   if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
@@ -542,12 +542,17 @@ async function handleIconSubmit(e) {
   e.preventDefault();
   const form = e.target;
   const opportunityId = Number(form.dataset.id);
+  const file = form.icon.files[0];
+  if (!file) {
+    setState({ iconSubmit: { opportunityId, message: "Choose an image file first.", kind: "error" } });
+    return;
+  }
   const btn = form.querySelector("button[type=submit]");
   btn.disabled = true;
   btn.textContent = "Submitting…";
   setState({ iconSubmit: { opportunityId, message: "Submitting…", kind: "pending" } });
   try {
-    await submitIcon(opportunityId, form.iconUrl.value.trim());
+    await submitIcon(opportunityId, file);
     setState({
       iconSubmit: { opportunityId, message: "Thanks — submitted for moderator review.", kind: "success" },
     });

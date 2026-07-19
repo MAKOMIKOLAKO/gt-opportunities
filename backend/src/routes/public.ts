@@ -1,6 +1,8 @@
 // Public read routes. MUST call getPublic()/getAllTags() exclusively —
 // never query `opportunities` directly here.
-import { Router } from "express";
+import express, { Router } from "express";
+import multer from "multer";
+import { uploadIcon, ALLOWED_ICON_MIME_TYPES, MAX_ICON_UPLOAD_BYTES } from "../lib/storage.js";
 import {
   getPublic,
   getAllTags,
@@ -22,6 +24,30 @@ import { REPORT_CATEGORIES, LINK_TYPES } from "../db/schema.js";
 const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 
 export const publicRouter = Router();
+
+// Memory storage: the upload is small (capped below) and goes straight to
+// R2 via a single PutObject — no need to touch disk.
+const iconUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_ICON_UPLOAD_BYTES },
+});
+
+// multer's own errors (e.g. file too large) call next(err) with a
+// MulterError, which would otherwise fall through to app.ts's generic 500
+// handler — turn the common "too large" case into a proper 400 instead.
+function handleIconUpload(req: express.Request, res: express.Response, next: express.NextFunction) {
+  iconUpload.single("icon")(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      res.status(400).json({ error: "validation_error", details: [err.message] });
+      return;
+    }
+    if (err) {
+      next(err);
+      return;
+    }
+    next();
+  });
+}
 
 publicRouter.get("/opportunities", async (req, res) => {
   const { type, search, tags } = req.query;
@@ -54,24 +80,18 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
   res.json({ result: { ...result, reviews, links, relatedOrgs } });
 });
 
-// Basic content check before it reaches the admin pending-icon queue: must
-// look like a plausible https image URL and stay under a sane length. This
-// is deliberately NOT a fetch-and-verify (real content-type/size check) —
-// actually fetching an arbitrary user-supplied URL server-side has SSRF
-// implications that deserve a deliberate design pass; see
-// BUILD_NOTES_ICON_FEATURE.md.
-// TODO: server-side fetch-and-verify (content-type sniff, size cap, SSRF-safe
-// resolved-IP allowlisting + redirect handling) before the URL is trusted —
-// currently an admin visually reviewing the thumbnail is the safety net.
-const ICON_URL_MAX_LENGTH = 2048;
-const ICON_URL_PATTERN = /^https:\/\/[^\s]+\.(png|jpe?g|gif|webp|svg)(\?[^\s]*)?$/i;
-
 // Public icon submission for an EXISTING (public/approved) opportunity —
-// there's no id to attach an icon to until an org has been approved. Sets
-// iconPendingUrl only; never touches the live iconUrl. Returns 404 if the
-// opportunity isn't public, same "can't distinguish pending/rejected from
-// doesn't-exist" convention used elsewhere in this file.
-publicRouter.post("/opportunities/:id/icon", async (req, res) => {
+// there's no id to attach an icon to until an org has been approved. Accepts
+// a real file upload (multipart/form-data, field name "icon") rather than a
+// user-typed URL: the server never fetches an arbitrary remote URL, which
+// sidesteps the SSRF concern a URL-only submission would have (see
+// BUILD_NOTES_FILE_STORAGE.md). MIME type and size are validated server-side
+// against the actual uploaded bytes (multer + the upload itself), not just a
+// filename/extension. Sets iconPendingUrl only; never touches the live
+// iconUrl. Returns 404 if the opportunity isn't public, same "can't
+// distinguish pending/rejected from doesn't-exist" convention used elsewhere
+// in this file.
+publicRouter.post("/opportunities/:id/icon", handleIconUpload, async (req, res) => {
   const opportunityId = Number(req.params.id);
   if (!Number.isInteger(opportunityId)) {
     res.status(404).json({ error: "not_found" });
@@ -84,21 +104,20 @@ publicRouter.post("/opportunities/:id/icon", async (req, res) => {
     return;
   }
 
-  const body = req.body ?? {};
-  const url = typeof body.url === "string" ? body.url.trim() : "";
-  const details: string[] = [];
-  if (!url) {
-    details.push("url is required");
-  } else if (url.length > ICON_URL_MAX_LENGTH) {
-    details.push(`url must be ${ICON_URL_MAX_LENGTH} characters or fewer`);
-  } else if (!ICON_URL_PATTERN.test(url)) {
-    details.push("url must be an https:// link ending in .png, .jpg, .jpeg, .gif, .webp, or .svg");
+  const file = req.file;
+  if (!file) {
+    res.status(400).json({ error: "validation_error", details: ["icon file is required"] });
+    return;
   }
-  if (details.length > 0) {
-    res.status(400).json({ error: "validation_error", details });
+  if (!ALLOWED_ICON_MIME_TYPES.includes(file.mimetype)) {
+    res.status(400).json({
+      error: "validation_error",
+      details: [`icon must be one of: ${ALLOWED_ICON_MIME_TYPES.join(", ")}`],
+    });
     return;
   }
 
+  const url = await uploadIcon(opportunityId, file.buffer, file.mimetype);
   await submitIconPending(opportunityId, url);
   res.status(201).json({ result: { id: opportunityId, iconPendingUrl: url } });
 });
