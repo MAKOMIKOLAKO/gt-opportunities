@@ -386,12 +386,15 @@ function renderDetailShell() {
   `;
 }
 
-async function loadDetail(id) {
-  const container = el("#detailContent");
-  try {
-    const opp = decorateOrg(await fetchOpportunity(id));
-    const d = detailFields(opp);
-    container.innerHTML = `
+// Fetched opportunities, keyed by id. Opening/closing the "Suggest an edit"
+// / "Submit an icon" modals just toggles state and calls render() like any
+// other state change, but the detail view shouldn't refetch-and-flash to
+// "Loading…" for that — render from cache when we already have the data.
+const detailCache = {};
+
+function renderDetailContent(opp) {
+  const d = detailFields(opp);
+  return `
       <div class="detail-card">
         <div class="detail-header">
           ${renderOrgIcon(opp, "lg")}
@@ -445,6 +448,18 @@ async function loadDetail(id) {
 
       ${renderRelatedOrgsBlock(opp)}
     `;
+}
+
+async function loadDetail(id) {
+  const container = el("#detailContent");
+  if (detailCache[id]) {
+    container.innerHTML = renderDetailContent(detailCache[id]);
+    return;
+  }
+  try {
+    const opp = decorateOrg(await fetchOpportunity(id));
+    detailCache[id] = opp;
+    container.innerHTML = renderDetailContent(opp);
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
