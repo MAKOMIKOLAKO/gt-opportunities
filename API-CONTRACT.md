@@ -110,6 +110,32 @@ dispute against a specific review (as opposed to a general report about the
 opportunity itself); `opportunityId` is still carried for context in that
 case. `reporterContact` is optional and never required.
 
+### Link shape (`LinkDTO`, Additional org links)
+
+Additional org links beyond "how to apply" — `opportunities.link` remains
+the single primary how-to-apply link; this is a proper child table for
+everything else (apply-adjacent, homepage, social, other), following the
+same pending -> admin-review -> approved lifecycle as reviews/reports.
+
+```json
+{
+  "id": 1,
+  "opportunityId": 1,
+  "label": "Team Instagram",
+  "url": "https://instagram.com/example",
+  "type": "social",
+  "status": "approved",
+  "submittedBy": null,
+  "createdAt": "2026-07-18 13:44:53",
+  "reviewedBy": null,
+  "reviewedAt": null
+}
+```
+
+`type` is one of `apply | homepage | social | other` — a plain text column
+with app-level validation, deliberately extensible later. `status` is one
+of `pending | approved | rejected`.
+
 ---
 
 ## Public endpoints
@@ -145,7 +171,10 @@ Fetch a single approved opportunity by id.
 Response `200`: `{ "result": Opportunity }` — `Opportunity` here includes a
 `reviews` array (Addition 3): approved reviews for this opportunity only,
 most-recent-first. Backed by `getApprovedReviews()` — structurally cannot
-include pending/rejected reviews.
+include pending/rejected reviews. It also includes a `links` array
+(additional org links): approved links only, `apply`-typed rows first, then
+creation order. Backed by `getApprovedLinks()` — structurally cannot
+include pending/rejected links.
 Response `404`: `{ "error": "not_found" }` (also returned if the row exists
 but is not approved — public callers must not be able to distinguish
 "pending/rejected" from "doesn't exist").
@@ -190,6 +219,27 @@ Response `400`: `{ "error": "validation_error", "details": [...] }`
 Response `404`: `{ "error": "not_found" }` if `:id` isn't a currently
 approved review.
 
+### `POST /api/opportunities/:id/links`
+
+Public submission of an additional org link (Additional org links). No
+auth. Creates a `status = "pending"` link — never directly visible until
+an admin approves it.
+
+Request body:
+```json
+{
+  "label": "Team Instagram",
+  "url": "https://instagram.com/example",
+  "type": "social",
+  "submittedBy": "optional, e.g. gtusername@gatech.edu"
+}
+```
+`type` is required, one of `apply | homepage | social | other`.
+Response `201`: `{ "result": { "id": 1, "status": "pending" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }`
+Response `404`: `{ "error": "not_found" }` if the opportunity isn't
+publicly visible (approved).
+
 ### `GET /api/tags`
 
 List the full tag vocabulary (for building filter UI).
@@ -218,9 +268,17 @@ Request body:
   "majors": ["CS"],
   "link": "https://example.com",
   "tagSlugs": ["robotics"],
-  "submittedBy": "gtusername@gatech.edu"
+  "submittedBy": "gtusername@gatech.edu",
+  "links": [
+    { "label": "Team Instagram", "url": "https://instagram.com/example", "type": "social" }
+  ]
 }
 ```
+`links` is optional — an array of additional org links to create alongside
+the opportunity (each becomes a `status = "pending"` row in the same way as
+`POST /api/opportunities/:id/links`). Each entry is validated individually;
+a malformed entry (missing `label`/`url`, or an invalid `type`) is silently
+skipped rather than failing the whole submission.
 
 Response `201`:
 ```json
@@ -426,6 +484,31 @@ Response `200`: `{ "results": [ /* Report[] */ ], "count": 1 }`
 Marks a report `resolved`, stamping `resolvedBy`/`resolvedAt`.
 
 Response `200`: `{ "result": Report }`
+Response `404`: `{ "error": "not_found" }`
+
+### `GET /api/admin/links?status=pending` (Additional org links)
+
+List additional-org-link submissions for the moderation queue, each linked
+to its opportunity via `opportunityId` **and** `opportunityName`. Backed by
+`getLinksForAdmin()`. `status` optional (`pending | approved | rejected`);
+omitted = all statuses.
+
+Response `200`: `{ "results": [ /* (Link & { opportunityName }) [] */ ], "count": 1 }`
+
+### `POST /api/admin/links/:id/approve`
+
+Marks a link `approved`, stamping `reviewedBy`/`reviewedAt`. Makes it
+visible on the opportunity's public detail response (`links` array).
+
+Response `200`: `{ "result": Link }`
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/links/:id/reject`
+
+Marks a link `rejected`, stamping `reviewedBy`/`reviewedAt`. Never appears
+in any public response.
+
+Response `200`: `{ "result": Link }`
 Response `404`: `{ "error": "not_found" }`
 
 ---

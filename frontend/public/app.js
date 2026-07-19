@@ -399,6 +399,7 @@ async function loadDetail(id) {
         </div>
 
         ${renderIconSubmitBlock(opp)}
+        ${renderLinksBlock(opp)}
 
         ${renderReviewsBlock(opp)}
       </div>
@@ -433,6 +434,39 @@ function renderIconSubmitBlock(opp) {
         <button type="submit" class="submit-btn">Submit icon</button>
       </form>
       ${statusMarkup}
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------
+// Rendering — additional links
+//
+// `opp.link` (the primary "how to apply" link, rendered as the Apply button
+// above) is separate from this — these are ADDITIONAL org links (apply-
+// adjacent, homepage, social, other) approved via the links moderation
+// queue. Only approved links are ever sent to this client.
+// ---------------------------------------------------------------------
+
+const LINK_TYPE_LABELS = { apply: "Apply", homepage: "Homepage", social: "Social", other: "Link" };
+
+function renderLinksBlock(opp) {
+  const links = opp.links || [];
+  if (links.length === 0) return "";
+  return `
+    <div class="links-block">
+      <div class="detail-tags-label">More links</div>
+      <ul class="links-list">
+        ${links
+          .map(
+            (l) => `
+          <li class="links-list-item">
+            <span class="link-type-badge">${escapeHtml(LINK_TYPE_LABELS[l.type] || l.type)}</span>
+            <a href="${escapeAttr(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label)}</a>
+          </li>
+        `
+          )
+          .join("")}
+      </ul>
     </div>
   `;
 }
@@ -633,6 +667,13 @@ function renderSubmit() {
             <input type="email" name="email" required placeholder="you@gatech.edu" />
           </div>
         </div>
+        <div class="submit-links-block">
+          <div class="submit-links-head">
+            <label>Additional links <span class="submit-links-hint">(optional — apply link, homepage, socials, etc.)</span></label>
+            <button type="button" class="add-link-row-btn" data-action="add-link-row">+ Add a link</button>
+          </div>
+          <div id="linkRows"></div>
+        </div>
         <div class="submit-callout">
           <span>&#8505;</span><span>Submissions enter a review queue and are checked for accuracy before publishing — expect 3&ndash;5 days.</span>
         </div>
@@ -641,6 +682,33 @@ function renderSubmit() {
       </form>
     </main>
   `;
+}
+
+function linkRowHtml() {
+  return `
+    <div class="link-row">
+      <input type="text" class="link-row-label" placeholder="Label (e.g. Apply Now)" maxlength="200" />
+      <input type="url" class="link-row-url" placeholder="https://..." maxlength="500" />
+      <select class="link-row-type">
+        <option value="apply">Apply</option>
+        <option value="homepage">Homepage</option>
+        <option value="social">Social</option>
+        <option value="other" selected>Other</option>
+      </select>
+      <button type="button" class="remove-link-row-btn" data-action="remove-link-row" aria-label="Remove link">&times;</button>
+    </div>
+  `;
+}
+
+function collectLinkRows(form) {
+  const rows = [...form.querySelectorAll(".link-row")];
+  return rows
+    .map((row) => ({
+      label: row.querySelector(".link-row-label").value.trim(),
+      url: row.querySelector(".link-row-url").value.trim(),
+      type: row.querySelector(".link-row-type").value,
+    }))
+    .filter((r) => r.label && r.url);
 }
 
 async function handleSubmit(e) {
@@ -661,6 +729,7 @@ async function handleSubmit(e) {
     majors: disciplineVal && disciplineVal !== "Multidisciplinary" ? [disciplineVal] : [],
     tagSlugs: resolveTagSlugs(tagsRaw),
     submittedBy: form.email.value.trim() || undefined,
+    links: collectLinkRows(form),
   };
 
   try {
@@ -793,6 +862,16 @@ function wireEvents() {
         if (e.target !== node && node.dataset.stopClose) return;
         setState({ flagReviewId: null });
         break;
+      case "add-link-row": {
+        const container = el("#linkRows");
+        if (container) container.insertAdjacentHTML("beforeend", linkRowHtml());
+        break;
+      }
+      case "remove-link-row": {
+        const row = node.closest(".link-row");
+        if (row) row.remove();
+        break;
+      }
     }
   });
 

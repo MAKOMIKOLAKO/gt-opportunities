@@ -16,11 +16,14 @@ import {
   tags,
   reviews,
   reports,
+  links,
   type OpportunityType,
   type OpportunityStatus,
   type ReviewStatus,
   type ReportCategory,
   type ReportStatus,
+  type LinkType,
+  type LinkStatus,
 } from "./schema.js";
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 
@@ -709,4 +712,128 @@ export async function resolveReport(id: number, resolvedBy: string): Promise<Rep
     .where(eq(reports.id, id));
   const rows = await db.select().from(reports).where(eq(reports.id, id));
   return toReportDTO(rows[0]);
+}
+
+// ---- Links (additional org links beyond "how to apply") ----
+// `opportunities.link` remains the single primary "how to apply" link; this
+// table holds ADDITIONAL links per opportunity. Follows the same
+// public/admin split as reviews: getApprovedLinks() is the ONLY sanctioned
+// public read path (status is hardcoded to 'approved', not a
+// caller-controlled filter) and getLinksForAdmin()/mutation helpers are
+// admin-only.
+
+export interface LinkDTO {
+  id: number;
+  opportunityId: number;
+  label: string;
+  url: string;
+  type: LinkType;
+  status: LinkStatus;
+  submittedBy: string | null;
+  createdAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
+function toLinkDTO(r: typeof links.$inferSelect): LinkDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    label: r.label,
+    url: r.url,
+    type: r.type,
+    status: r.status,
+    submittedBy: r.submittedBy,
+    createdAt: r.createdAt,
+    reviewedBy: r.reviewedBy,
+    reviewedAt: r.reviewedAt,
+  };
+}
+
+export interface LinkSubmissionInput {
+  opportunityId: number;
+  label: string;
+  url: string;
+  type: LinkType;
+  submittedBy?: string | null;
+}
+
+/**
+ * Public submission path: always status='pending'. Callers (routes) MUST
+ * validate `type` is one of LINK_TYPES before calling this — no validation
+ * happens here.
+ */
+export async function insertLinkSubmission(input: LinkSubmissionInput): Promise<number> {
+  const [row] = await db
+    .insert(links)
+    .values({
+      opportunityId: input.opportunityId,
+      label: input.label,
+      url: input.url,
+      type: input.type,
+      status: "pending",
+      submittedBy: input.submittedBy ?? null,
+    })
+    .returning({ id: links.id });
+  return row.id;
+}
+
+/**
+ * The only sanctioned public-read path for links. status = 'approved' is
+ * hardcoded — there is no way for a caller to request pending/rejected
+ * rows. `apply`-typed rows are ADDITIONAL apply-adjacent links (the primary
+ * how-to-apply link lives on `opportunities.link`), ordered first, then by
+ * creation order.
+ */
+export async function getApprovedLinks(opportunityId: number): Promise<LinkDTO[]> {
+  const rows = await db
+    .select()
+    .from(links)
+    .where(and(eq(links.opportunityId, opportunityId), eq(links.status, "approved" as const)))
+    .orderBy(links.createdAt);
+  return rows
+    .map(toLinkDTO)
+    .sort((a, b) => (a.type === "apply" ? -1 : 0) - (b.type === "apply" ? -1 : 0));
+}
+
+/** ADMIN-ONLY: list links for the moderation queue, optionally by status. */
+export async function getLinksForAdmin(
+  filters: { status?: LinkStatus } = {}
+): Promise<(LinkDTO & { opportunityName: string })[]> {
+  const conditions = filters.status ? [eq(links.status, filters.status)] : [];
+  const rows = await db
+    .select({
+      link: links,
+      opportunityName: opportunities.name,
+    })
+    .from(links)
+    .innerJoin(opportunities, eq(links.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(links.createdAt));
+  return rows.map((r) => ({ ...toLinkDTO(r.link), opportunityName: r.opportunityName }));
+}
+
+async function getLinkById(id: number): Promise<typeof links.$inferSelect | null> {
+  const rows = await db.select().from(links).where(eq(links.id, id));
+  return rows[0] ?? null;
+}
+
+/** ADMIN-ONLY: approve a pending link, stamping reviewedBy/reviewedAt. */
+export async function approveLink(id: number, reviewedBy: string): Promise<LinkDTO | null> {
+  if (!(await getLinkById(id))) return null;
+  await db
+    .update(links)
+    .set({ status: "approved", reviewedBy, reviewedAt: sql`now()` })
+    .where(eq(links.id, id));
+  return toLinkDTO((await getLinkById(id))!);
+}
+
+/** ADMIN-ONLY: reject a link, stamping reviewedBy/reviewedAt. */
+export async function rejectLink(id: number, reviewedBy: string): Promise<LinkDTO | null> {
+  if (!(await getLinkById(id))) return null;
+  await db
+    .update(links)
+    .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
+    .where(eq(links.id, id));
+  return toLinkDTO((await getLinkById(id))!);
 }

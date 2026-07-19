@@ -155,3 +155,35 @@ export const reports = pgTable("reports", {
   resolvedBy: text("resolved_by"),
   resolvedAt: timestamp("resolved_at", { mode: "string" }),
 });
+
+// ---- Links (Additional org links beyond "how to apply") ----
+// `opportunities.link` remains the single primary "how to apply" link. This
+// table holds ADDITIONAL links per opportunity (apply-adjacent, homepage,
+// social, other), submitted either standalone (public link-submission route)
+// or alongside a new opportunity submission. `type` is a plain text column
+// with app-level enum validation (not a Postgres native enum type),
+// deliberately extensible later — matches how the rest of this schema
+// handles small closed vocabularies (see OPPORTUNITY_TYPES). Follows the
+// same pending -> admin-review -> approved lifecycle as reviews/reports;
+// LINK_STATUSES intentionally mirrors REVIEW_STATUSES's shape rather than
+// importing it, since links are their own domain.
+export const LINK_TYPES = ["apply", "homepage", "social", "other"] as const;
+export type LinkType = (typeof LINK_TYPES)[number];
+
+export const LINK_STATUSES = ["pending", "approved", "rejected"] as const;
+export type LinkStatus = (typeof LINK_STATUSES)[number];
+
+export const links = pgTable("links", {
+  id: serial("id").primaryKey(),
+  opportunityId: integer("opportunity_id")
+    .notNull()
+    .references(() => opportunities.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  type: text("type").$type<LinkType>().notNull(),
+  status: text("status").$type<LinkStatus>().notNull().default("pending"),
+  submittedBy: text("submitted_by"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+});

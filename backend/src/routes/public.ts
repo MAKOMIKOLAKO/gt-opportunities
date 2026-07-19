@@ -9,9 +9,11 @@ import {
   insertReview,
   insertReport,
   submitIconPending,
+  getApprovedLinks,
+  insertLinkSubmission,
 } from "../db/data-access.js";
-import type { OpportunityType, ReportCategory } from "../db/schema.js";
-import { REPORT_CATEGORIES } from "../db/schema.js";
+import type { OpportunityType, ReportCategory, LinkType } from "../db/schema.js";
+import { REPORT_CATEGORIES, LINK_TYPES } from "../db/schema.js";
 
 const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 
@@ -43,7 +45,8 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
     return;
   }
   const reviews = await getApprovedReviews(id);
-  res.json({ result: { ...result, reviews } });
+  const links = await getApprovedLinks(id);
+  res.json({ result: { ...result, reviews, links } });
 });
 
 // Basic content check before it reaches the admin pending-icon queue: must
@@ -139,6 +142,53 @@ publicRouter.post("/opportunities/:id/reviews", async (req, res) => {
     timeCommitment: body.timeCommitment.trim(),
     beforeApplying: body.beforeApplying.trim(),
     adviceNewMember: body.adviceNewMember.trim(),
+  });
+
+  res.status(201).json({ result: { id, status: "pending" } });
+});
+
+// Public submission of an ADDITIONAL link (beyond opportunities.link, the
+// primary "how to apply" link) — e.g. a homepage, social, or another
+// apply-adjacent link. Creates a pending link; only visible publicly once
+// an admin approves it (see getApprovedLinks() in data-access.ts).
+publicRouter.post("/opportunities/:id/links", async (req, res) => {
+  const opportunityId = Number(req.params.id);
+  if (!Number.isInteger(opportunityId)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  // Confirm the opportunity is publicly visible before accepting a link
+  // for it (avoids leaking existence of pending/rejected rows via 201s).
+  const publicOpportunities = await getPublic();
+  const opp = publicOpportunities.find((r) => r.id === opportunityId);
+  if (!opp) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  const details: string[] = [];
+  if (typeof body.label !== "string" || body.label.trim() === "") {
+    details.push("label is required");
+  }
+  if (typeof body.url !== "string" || body.url.trim() === "") {
+    details.push("url is required");
+  }
+  const type = typeof body.type === "string" ? (body.type as LinkType) : undefined;
+  if (!type || !LINK_TYPES.includes(type)) {
+    details.push(`type is required and must be one of ${LINK_TYPES.join("|")}`);
+  }
+  if (details.length > 0) {
+    res.status(400).json({ error: "validation_error", details });
+    return;
+  }
+
+  const id = await insertLinkSubmission({
+    opportunityId,
+    label: body.label.trim(),
+    url: body.url.trim(),
+    type: type!,
+    submittedBy: typeof body.submittedBy === "string" ? body.submittedBy : null,
   });
 
   res.status(201).json({ result: { id, status: "pending" } });
