@@ -38,6 +38,14 @@ a { color: inherit; }
   flex-direction: column;
 }
 
+/* #pageShell wraps header/main/footer so modal open/close (#modalRoot) can
+   re-render without touching them, but its children still need to act as
+   #app's direct flex items for the sticky-footer `main { flex: 1 }` layout
+   to work — display:contents removes the wrapper's own box from the flow. */
+#pageShell {
+  display: contents;
+}
+
 /* ---------- Header ---------- */
 
 .gt-header {

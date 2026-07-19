@@ -927,21 +927,34 @@ function escapeAttr(str) {
 // Main render / event wiring
 // ---------------------------------------------------------------------
 
+// The modal forms (review/flag/icon/suggest-edit) toggle open and closed
+// through the same setState()->render() path as every other state change,
+// but they only ever open from the detail page and don't affect the
+// header/detail/footer content at all. Rebuilding the *entire* #app
+// innerHTML just to show/hide a modal tears down and recreates the whole
+// page's DOM (header, nav, detail card, org icons, footer) on every click —
+// which is what actually reads as "the page refreshing", even with
+// loadDetail()'s cache avoiding a refetch. When we're still on the same
+// detail page as the last render, skip the full shell rebuild and only
+// refresh #detailContent (from cache) and #modalRoot.
+let lastDetailShellId = null;
+
 function render() {
   const app = el("#app");
+
+  if (state.view === "detail" && state.selectedId === lastDetailShellId && el("#pageShell")) {
+    loadDetail(state.selectedId);
+    renderModals();
+    return;
+  }
+  lastDetailShellId = state.view === "detail" ? state.selectedId : null;
+
   let body;
   if (state.view === "detail") body = renderDetailShell();
   else if (state.view === "submit") body = renderSubmit();
   else body = renderDirectory();
 
-  app.innerHTML =
-    renderHeader() +
-    body +
-    renderFooter() +
-    renderReviewFormModal() +
-    renderFlagFormModal() +
-    renderIconFormModal() +
-    renderSuggestEditModal();
+  app.innerHTML = `<div id="pageShell">${renderHeader() + body + renderFooter()}</div><div id="modalRoot"></div>`;
   wireEvents();
 
   if (state.view === "directory") {
@@ -950,6 +963,14 @@ function render() {
   } else if (state.view === "detail") {
     loadDetail(state.selectedId);
   }
+
+  renderModals();
+}
+
+function renderModals() {
+  const modalRoot = el("#modalRoot");
+  if (!modalRoot) return;
+  modalRoot.innerHTML = renderReviewFormModal() + renderFlagFormModal() + renderIconFormModal() + renderSuggestEditModal();
 }
 
 let eventsWired = false;
