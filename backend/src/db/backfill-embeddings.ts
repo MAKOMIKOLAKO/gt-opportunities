@@ -16,6 +16,7 @@
 // report 0/N backfilled rather than erroring, which is the correct behavior
 // (nothing to do yet).
 import { isNull } from "drizzle-orm";
+import { appendFile } from "node:fs/promises";
 import { db, closePool } from "./client.js";
 import { opportunities } from "./schema.js";
 import { embedOpportunity } from "../lib/embeddings.js";
@@ -31,20 +32,40 @@ async function main() {
 
   let embedded = 0;
   let skipped = 0;
+  let failed = 0;
   for (const row of rows) {
-    const ok = await embedOpportunity(row.id);
-    if (!ok) {
-      skipped++;
-      continue;
+    try {
+      const ok = await embedOpportunity(row.id);
+      if (!ok) {
+        skipped++;
+        continue;
+      }
+      await recomputeRelated(row.id);
+      embedded++;
+      console.log(`  [embedded] ${row.id}: ${row.name}`);
+    } catch (err) {
+      failed++;
+      console.error(`  [failed] ${row.id}: ${row.name} —`, (err as Error).message);
     }
-    await recomputeRelated(row.id);
-    embedded++;
-    console.log(`  [embedded] ${row.id}: ${row.name}`);
   }
 
-  console.log(`\nDone. embedded=${embedded} skipped=${skipped} total=${rows.length}`);
-  if (skipped > 0 && embedded === 0) {
+  const summary = `Done. embedded=${embedded} skipped=${skipped} failed=${failed} total=${rows.length}`;
+  console.log(`\n${summary}`);
+  if (skipped > 0 && embedded === 0 && failed === 0) {
     console.log("(0 embedded — check that OPENAI_API_KEY is set in this environment.)");
+  }
+
+  // In CI (GitHub Actions sets this), also surface the summary as part of
+  // the job's own Summary tab, not just buried in the raw log output.
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await appendFile(
+      process.env.GITHUB_STEP_SUMMARY,
+      `\n## Embeddings backfill\n\n- Embedded: ${embedded}\n- Skipped: ${skipped}\n- Failed: ${failed}\n- Total considered: ${rows.length}\n`
+    );
+  }
+
+  if (failed > 0) {
+    process.exitCode = 1;
   }
 }
 
