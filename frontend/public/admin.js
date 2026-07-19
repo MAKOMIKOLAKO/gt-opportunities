@@ -3,15 +3,18 @@
 // is scoped strictly to what Addition 3 needs — it does not attempt to
 // build out opportunity-approval UI (that queue already has a working API
 // at GET/POST /api/admin/opportunities/* but no frontend; out of scope
-// here).
+// here). Also includes the "Suggested Edits" queue (single-field correction
+// proposals against existing listings) added afterward, following the same
+// pending-queue tab pattern.
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports
+  tab: "reviews", // reviews | reports | suggestedEdits
   reviews: [],
   reports: [],
+  suggestedEdits: [],
   guidance: "",
   loading: false,
   error: "",
@@ -63,14 +66,16 @@ async function login(username, password) {
 async function loadQueues() {
   setState({ loading: true, error: "" });
   try {
-    const [reviewsRes, reportsRes] = await Promise.all([
+    const [reviewsRes, reportsRes, suggestedEditsRes] = await Promise.all([
       apiFetch("/admin/reviews?status=pending"),
       apiFetch("/admin/reports?status=open"),
+      apiFetch("/admin/suggested-edits?status=pending"),
     ]);
     setState({
       reviews: reviewsRes.results,
       guidance: reviewsRes.guidance || "",
       reports: reportsRes.results,
+      suggestedEdits: suggestedEditsRes.results,
       loading: false,
     });
   } catch (err) {
@@ -99,6 +104,24 @@ async function rejectReview(id) {
 async function resolveReport(id) {
   try {
     await apiFetch(`/admin/reports/${id}/resolve`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function approveSuggestedEdit(id) {
+  try {
+    await apiFetch(`/admin/suggested-edits/${id}/approve`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function rejectSuggestedEdit(id) {
+  try {
+    await apiFetch(`/admin/suggested-edits/${id}/reject`, { method: "POST" });
     loadQueues();
   } catch (err) {
     setState({ error: err.message });
@@ -174,6 +197,53 @@ function renderReportsTab() {
     .join("");
 }
 
+const SUGGEST_EDIT_FIELD_LABELS = { name: "Name", description: "Description", link: "Link", majors: "Majors sought" };
+
+// Simple side-by-side strikethrough-old / highlighted-new display — no real
+// diff algorithm, these are short field values (a name/description/link, or
+// a majors list), not documents. `majors` values are stored/submitted as
+// JSON-serialized arrays; pretty-print them as a comma list for readability.
+function formatSuggestedValue(field, value) {
+  if (value === null || value === undefined) return "(empty)";
+  if (field !== "majors") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.join(", ") || "(none)" : value;
+  } catch {
+    return value;
+  }
+}
+
+function renderSuggestedEditsTab() {
+  if (state.suggestedEdits.length === 0) {
+    return `<div class="review-empty">No pending suggested edits.</div>`;
+  }
+  return state.suggestedEdits
+    .map(
+      (s) => `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-head">
+        <div class="admin-queue-item-title">
+          <span class="suggest-edit-field-badge">${escapeHtml(SUGGEST_EDIT_FIELD_LABELS[s.field] || s.field)}</span>
+          ${escapeHtml(s.opportunityName)} <span class="admin-queue-item-meta">(opportunity #${s.opportunityId})</span>
+        </div>
+        <div class="admin-queue-item-meta">${escapeHtml((s.createdAt || "").slice(0, 16))}</div>
+      </div>
+      <div class="suggest-edit-diff">
+        <div class="suggest-edit-diff-old">${escapeHtml(formatSuggestedValue(s.field, s.oldValue))}</div>
+        <div class="suggest-edit-diff-new">${escapeHtml(formatSuggestedValue(s.field, s.newValue))}</div>
+      </div>
+      ${s.submittedBy ? `<div class="admin-queue-item-meta">Submitted by: ${escapeHtml(s.submittedBy)}</div>` : ""}
+      <div class="admin-queue-actions">
+        <button class="admin-btn approve" data-action="approve-suggested-edit" data-id="${s.id}">Approve</button>
+        <button class="admin-btn reject" data-action="reject-suggested-edit" data-id="${s.id}">Reject</button>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+}
+
 function renderDashboard() {
   return `
     <main class="view-admin">
@@ -181,14 +251,25 @@ function renderDashboard() {
       <div class="admin-tabs">
         <button class="${state.tab === "reviews" ? "active" : ""}" data-action="tab-reviews">Reviews (${state.reviews.length})</button>
         <button class="${state.tab === "reports" ? "active" : ""}" data-action="tab-reports">Reports / Disputes (${state.reports.length})</button>
+        <button class="${state.tab === "suggestedEdits" ? "active" : ""}" data-action="tab-suggested-edits">Suggested Edits (${state.suggestedEdits.length})</button>
       </div>
       ${
         state.tab === "reviews"
           ? `<div class="admin-guidance"><strong>Moderation guidance for reviews:</strong> ${escapeHtml(state.guidance)}</div>`
-          : `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
+          : state.tab === "reports"
+          ? `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
+          : `<div class="admin-guidance">Anonymous corrections proposed for a single field on an existing listing. Approving writes the new value directly onto the live listing (and refreshes search); rejecting leaves the listing untouched.</div>`
       }
       ${state.error ? `<div class="form-error" style="margin-bottom:14px;">${escapeHtml(state.error)}</div>` : ""}
-      ${state.loading ? `<div class="state-msg">Loading&hellip;</div>` : state.tab === "reviews" ? renderReviewsTab() : renderReportsTab()}
+      ${
+        state.loading
+          ? `<div class="state-msg">Loading&hellip;</div>`
+          : state.tab === "reviews"
+          ? renderReviewsTab()
+          : state.tab === "reports"
+          ? renderReportsTab()
+          : renderSuggestedEditsTab()
+      }
     </main>
   `;
 }
@@ -228,6 +309,9 @@ function wireEvents() {
       case "tab-reports":
         setState({ tab: "reports" });
         break;
+      case "tab-suggested-edits":
+        setState({ tab: "suggestedEdits" });
+        break;
       case "approve-review":
         approveReview(node.dataset.id);
         break;
@@ -236,6 +320,12 @@ function wireEvents() {
         break;
       case "resolve-report":
         resolveReport(Number(node.dataset.id));
+        break;
+      case "approve-suggested-edit":
+        approveSuggestedEdit(Number(node.dataset.id));
+        break;
+      case "reject-suggested-edit":
+        rejectSuggestedEdit(Number(node.dataset.id));
         break;
     }
   });

@@ -91,6 +91,8 @@ const state = {
   lastSubmittedName: "",
   reviewFormOpportunityId: null,
   flagReviewId: null,
+  suggestEditOpen: false,
+  suggestEditMessage: "",
 };
 
 let searchDebounce = null;
@@ -134,6 +136,31 @@ async function submitReview(opportunityId, body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+// Field picker for "Suggest an edit" — matches the server-side allowlist
+// exactly (backend/src/routes/public.ts SUGGESTABLE_FIELDS). `majors` is
+// entered as a comma-separated list in the UI and converted to the
+// JSON-serialized array string the API expects before posting.
+const SUGGEST_EDIT_FIELDS = [
+  { key: "name", label: "Name" },
+  { key: "description", label: "Description" },
+  { key: "link", label: "Link" },
+  { key: "majors", label: "Majors sought" },
+];
+
+async function submitSuggestEdit(opportunityId, field, newValueRaw) {
+  const newValue = field === "majors"
+    ? JSON.stringify(newValueRaw.split(",").map((m) => m.trim()).filter(Boolean))
+    : newValueRaw;
+  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/suggest-edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ field, newValue }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
@@ -385,12 +412,55 @@ async function loadDetail(id) {
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
 
+        ${renderSuggestEditBlock(opp)}
+
         ${renderReviewsBlock(opp)}
       </div>
     `;
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
+}
+
+// ---------------------------------------------------------------------
+// Rendering — suggest an edit
+//
+// Lightweight, unobtrusive "propose a correction" affordance: collapsed by
+// default (a small link), expands into a one-field-at-a-time form. Posts to
+// POST /api/opportunities/:id/suggest-edit and lands in the admin
+// "Suggested Edits" queue as a pending row — nothing here touches the live
+// listing directly.
+// ---------------------------------------------------------------------
+
+function renderSuggestEditBlock(opp) {
+  if (!state.suggestEditOpen) {
+    return `
+      <div class="suggest-edit-block">
+        <button class="suggest-edit-toggle" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit to this listing</button>
+        ${state.suggestEditMessage ? `<div class="suggest-edit-message">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
+      </div>
+    `;
+  }
+  return `
+    <div class="suggest-edit-block open">
+      <div class="suggest-edit-title">Suggest an edit</div>
+      <form id="suggestEditForm" data-id="${opp.id}">
+        <div class="suggest-edit-row">
+          <label>Field</label>
+          <select name="field" required>
+            ${SUGGEST_EDIT_FIELDS.map((f) => `<option value="${f.key}">${escapeHtml(f.label)}</option>`).join("")}
+          </select>
+        </div>
+        <label>Proposed new value</label>
+        <textarea name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
+        <div id="suggestEditError"></div>
+        <div class="review-form-actions">
+          <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
+          <button type="submit" class="submit-btn">Submit suggestion</button>
+        </div>
+      </form>
+    </div>
+  `;
 }
 
 // ---------------------------------------------------------------------
@@ -701,7 +771,7 @@ function wireEvents() {
         setState({ query: "", typeFilter: "", discipline: "All Disciplines" });
         break;
       case "open-detail":
-        setState({ view: "detail", selectedId: Number(node.dataset.id) });
+        setState({ view: "detail", selectedId: Number(node.dataset.id), suggestEditOpen: false, suggestEditMessage: "" });
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
@@ -719,6 +789,12 @@ function wireEvents() {
       case "close-flag-form":
         if (e.target !== node && node.dataset.stopClose) return;
         setState({ flagReviewId: null });
+        break;
+      case "open-suggest-edit":
+        setState({ suggestEditOpen: true, suggestEditMessage: "" });
+        break;
+      case "close-suggest-edit":
+        setState({ suggestEditOpen: false });
         break;
     }
   });
@@ -745,6 +821,8 @@ function wireEvents() {
       handleReviewSubmit(e);
     } else if (e.target.id === "flagForm") {
       handleFlagSubmit(e);
+    } else if (e.target.id === "suggestEditForm") {
+      handleSuggestEditSubmit(e);
     }
   });
 }
@@ -787,6 +865,25 @@ async function handleFlagSubmit(e) {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Submit flag";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleSuggestEditSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = Number(form.dataset.id);
+  const btn = form.querySelector("button[type=submit]");
+  const errorEl = el("#suggestEditError");
+  errorEl.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await submitSuggestEdit(opportunityId, form.field.value, form.newValue.value.trim());
+    setState({ suggestEditOpen: false, suggestEditMessage: "Thanks — your suggestion was submitted for review." });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit suggestion";
     errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }

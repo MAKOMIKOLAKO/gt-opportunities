@@ -16,11 +16,13 @@ import {
   tags,
   reviews,
   reports,
+  suggestedEdits,
   type OpportunityType,
   type OpportunityStatus,
   type ReviewStatus,
   type ReportCategory,
   type ReportStatus,
+  type SuggestedEditStatus,
 } from "./schema.js";
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 
@@ -615,4 +617,155 @@ export async function resolveReport(id: number, resolvedBy: string): Promise<Rep
     .where(eq(reports.id, id));
   const rows = await db.select().from(reports).where(eq(reports.id, id));
   return toReportDTO(rows[0]);
+}
+
+// ---- Suggested edits (Addition: suggest edits on existing listings) ----
+// Public "propose a correction" flow scoped to a single field
+// (name|description|link|majors — enforced as a fixed allowlist at the
+// route layer, see backend/src/routes/public.ts) on an existing, publicly
+// visible opportunity. Same public/admin split as reviews/reports:
+// insertSuggestedEdit() is the only sanctioned public write path, and it
+// reads the CURRENT field value server-side (never trusts a client-supplied
+// oldValue) so the admin queue can show an accurate before/after even if the
+// live row changes again before review.
+
+export type SuggestableField = "name" | "description" | "link" | "majors";
+export const SUGGESTABLE_FIELDS: SuggestableField[] = ["name", "description", "link", "majors"];
+
+export interface SuggestedEditDTO {
+  id: number;
+  opportunityId: number;
+  field: string;
+  oldValue: string | null;
+  newValue: string;
+  submittedBy: string | null;
+  status: SuggestedEditStatus;
+  createdAt: string;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
+function toSuggestedEditDTO(r: typeof suggestedEdits.$inferSelect): SuggestedEditDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    field: r.field,
+    oldValue: r.oldValue,
+    newValue: r.newValue,
+    submittedBy: r.submittedBy,
+    status: r.status,
+    createdAt: r.createdAt,
+    reviewedBy: r.reviewedBy,
+    reviewedAt: r.reviewedAt,
+  };
+}
+
+export interface SuggestedEditInput {
+  opportunityId: number;
+  field: SuggestableField;
+  newValue: string;
+  submittedBy?: string | null;
+}
+
+export type InsertSuggestedEditResult =
+  | { ok: true; id: number; status: "pending" }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "noop" };
+
+/**
+ * Public submission path. Looks up the opportunity via getPublic() (must be
+ * approved/publicly visible — same "404, don't leak pending/rejected rows"
+ * convention as the reviews submission path) and reads the field's CURRENT
+ * value server-side to populate `oldValue`. A submission whose `newValue`
+ * exactly matches the current value is rejected as a no-op (the route turns
+ * that into a 400) instead of creating a pointless pending row.
+ */
+export async function insertSuggestedEdit(input: SuggestedEditInput): Promise<InsertSuggestedEditResult> {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.id, input.opportunityId));
+  const row = rows[0];
+  if (!row || row.status !== "approved") return { ok: false, reason: "not_found" };
+
+  // Raw column values are already the on-the-wire representation for every
+  // suggestable field (majors is stored TEXT-serialized JSON already, same
+  // shape a caller is expected to submit as `newValue`) — no accessor
+  // round-trip needed to snapshot `oldValue`.
+  const oldValue: string | null = row[input.field] ?? null;
+
+  if (input.newValue === oldValue) return { ok: false, reason: "noop" };
+
+  const [inserted] = await db
+    .insert(suggestedEdits)
+    .values({
+      opportunityId: input.opportunityId,
+      field: input.field,
+      oldValue,
+      newValue: input.newValue,
+      submittedBy: input.submittedBy ?? null,
+      status: "pending",
+    })
+    .returning({ id: suggestedEdits.id });
+
+  return { ok: true, id: inserted.id, status: "pending" };
+}
+
+/** ADMIN-ONLY: list suggested edits for the moderation queue, optionally by status. */
+export async function getSuggestedEditsForAdmin(
+  filters: { status?: SuggestedEditStatus } = {}
+): Promise<(SuggestedEditDTO & { opportunityName: string })[]> {
+  const conditions = filters.status ? [eq(suggestedEdits.status, filters.status)] : [];
+  const rows = await db
+    .select({
+      edit: suggestedEdits,
+      opportunityName: opportunities.name,
+    })
+    .from(suggestedEdits)
+    .innerJoin(opportunities, eq(suggestedEdits.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(suggestedEdits.createdAt));
+  return rows.map((r) => ({ ...toSuggestedEditDTO(r.edit), opportunityName: r.opportunityName }));
+}
+
+async function getSuggestedEditById(id: number): Promise<typeof suggestedEdits.$inferSelect | null> {
+  const rows = await db.select().from(suggestedEdits).where(eq(suggestedEdits.id, id));
+  return rows[0] ?? null;
+}
+
+/**
+ * ADMIN-ONLY: approve a pending suggested edit — writes `newValue` into the
+ * live opportunities row's `field` column (majors round-trips through
+ * setMajors/JSON.parse; every other suggestable field is a plain text
+ * column write), stamps the suggested_edits row approved, and re-runs
+ * refreshSearchBlob() since name/description/majors all feed the search
+ * index. The opportunities write + suggested_edits stamp happen in one
+ * transaction; refreshSearchBlob runs after (mirrors updateOpportunity()'s
+ * shape just above the Reviews section).
+ */
+export async function approveSuggestedEdit(id: number, reviewedBy: string): Promise<SuggestedEditDTO | null> {
+  const existing = await getSuggestedEditById(id);
+  if (!existing) return null;
+
+  await db.transaction(async (tx) => {
+    const patch: Record<string, unknown> =
+      existing.field === "majors" ? { majors: setMajors(JSON.parse(existing.newValue)) } : { [existing.field]: existing.newValue };
+    patch.updatedAt = sql`now()`;
+
+    await tx.update(opportunities).set(patch).where(eq(opportunities.id, existing.opportunityId));
+    await tx
+      .update(suggestedEdits)
+      .set({ status: "approved", reviewedBy, reviewedAt: sql`now()` })
+      .where(eq(suggestedEdits.id, id));
+  });
+
+  await refreshSearchBlob(existing.opportunityId);
+  return toSuggestedEditDTO((await getSuggestedEditById(id))!);
+}
+
+/** ADMIN-ONLY: reject a pending suggested edit, stamping reviewedBy/reviewedAt. No write to the live row. */
+export async function rejectSuggestedEdit(id: number, reviewedBy: string): Promise<SuggestedEditDTO | null> {
+  if (!(await getSuggestedEditById(id))) return null;
+  await db
+    .update(suggestedEdits)
+    .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
+    .where(eq(suggestedEdits.id, id));
+  return toSuggestedEditDTO((await getSuggestedEditById(id))!);
 }

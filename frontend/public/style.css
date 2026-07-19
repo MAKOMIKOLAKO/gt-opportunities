@@ -639,7 +639,41 @@ main {
   padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 
-/* ---------- Admin (Addition 3: reviews + reports queues) ---------- */
+/* ---------- Suggest an edit ---------- */
+
+.suggest-edit-block {
+  margin: 20px 0;
+  padding-top: 16px;
+  border-top: 1px solid #EFF1EE;
+}
+.suggest-edit-toggle {
+  background: none;
+  border: none;
+  color: var(--gray-matter);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.suggest-edit-toggle:hover { color: var(--navy); }
+.suggest-edit-message { margin-top: 8px; font-size: 12.5px; color: #1f7a3d; }
+.suggest-edit-block.open {
+  background: var(--diploma);
+  border: 1px solid var(--pi-mile);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.suggest-edit-title { font-size: 13px; font-weight: 800; color: var(--navy); margin-bottom: 12px; }
+.suggest-edit-row { margin-bottom: 12px; }
+.suggest-edit-block label { display: block; font-size: 12px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.suggest-edit-block select,
+.suggest-edit-block textarea {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
+  font-size: 13.5px; background: #fff; color: var(--ink); resize: vertical; margin-bottom: 4px;
+}
+.suggest-edit-block #suggestEditError { margin: 8px 0; }
+
+/* ---------- Admin (Addition 3: reviews + reports queues; suggested edits) ---------- */
 
 .view-admin { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
 .admin-login-form { max-width: 360px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
@@ -670,6 +704,14 @@ main {
   padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .admin-tabs button.active { border-color: var(--navy); color: var(--navy); background: var(--diploma); }
+
+.suggest-edit-diff { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.suggest-edit-diff-old { font-size: 13px; color: #9c2b23; text-decoration: line-through; word-break: break-word; }
+.suggest-edit-diff-new { font-size: 13.5px; color: #1f7a3d; font-weight: 600; word-break: break-word; }
+.suggest-edit-field-badge {
+  display: inline-block; background: var(--navy); color: #fff; font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 8px; border-radius: 5px; margin-right: 8px;
+}
 
 /* ---------- Loading / error ---------- */
 
