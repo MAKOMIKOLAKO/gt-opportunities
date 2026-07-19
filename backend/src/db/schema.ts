@@ -152,6 +152,38 @@ export const reviews = pgTable("reviews", {
   reviewedAt: timestamp("reviewed_at", { mode: "string" }),
 });
 
+// ---- Suggested edits (Addition: suggest edits on existing listings) ----
+// Public, anonymous-friendly "propose a correction" flow for a single field
+// on an existing opportunity, reviewed by an admin before it touches the
+// live row. Deliberately field-scoped (one row per proposed change to one
+// field) rather than a full-row diff, matching the narrow public surface
+// (`name | description | link | majors`) the route layer allowlists —
+// see backend/src/routes/public.ts.
+export const SUGGESTED_EDIT_STATUSES = ["pending", "approved", "rejected"] as const;
+export type SuggestedEditStatus = (typeof SUGGESTED_EDIT_STATUSES)[number];
+
+export const suggestedEdits = pgTable("suggested_edits", {
+  id: serial("id").primaryKey(),
+  opportunityId: integer("opportunity_id")
+    .notNull()
+    .references(() => opportunities.id, { onDelete: "cascade" }),
+  // Which opportunities.* column is being proposed for change. Free-text
+  // column here, but the route layer enforces a fixed allowlist server-side
+  // (name|description|link|majors) — never trust a client-supplied field.
+  field: text("field").notNull(),
+  // Snapshot of the field's value at submission time, captured server-side
+  // (not client-supplied) so admins can see the delta even if the live row
+  // changes again before this suggestion is reviewed. Nullable because
+  // `link` itself is nullable on the live row.
+  oldValue: text("old_value"),
+  newValue: text("new_value").notNull(),
+  submittedBy: text("submitted_by"),
+  status: text("status").$type<SuggestedEditStatus>().notNull().default("pending"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+});
+
 // ---- Reports (Addition 3) ----
 // NOTE: a `reports` table is also being prototyped, independently and not
 // yet merged, on `worktree-reports-and-vip-search`. This copy was created

@@ -12,6 +12,9 @@ import {
   submitIconPending,
   getApprovedLinks,
   insertLinkSubmission,
+  insertSuggestedEdit,
+  SUGGESTABLE_FIELDS,
+  type SuggestableField,
 } from "../db/data-access.js";
 import type { OpportunityType, ReportCategory, LinkType } from "../db/schema.js";
 import { REPORT_CATEGORIES, LINK_TYPES } from "../db/schema.js";
@@ -226,4 +229,50 @@ publicRouter.post("/reviews/:id/report", async (req, res) => {
   });
 
   res.status(201).json({ result: { id, status: "open" } });
+});
+
+// Public "suggest an edit" path for a single field on an existing, publicly
+// visible opportunity. `field` is validated against a fixed server-side
+// allowlist (SUGGESTABLE_FIELDS) — never trust a client-supplied field name,
+// since that would let a caller target internal columns (status/source/meta/id).
+// Creates a pending suggested_edits row; nothing touches the live
+// opportunities row until an admin approves it (see approveSuggestedEdit()).
+publicRouter.post("/opportunities/:id/suggest-edit", async (req, res) => {
+  const opportunityId = Number(req.params.id);
+  if (!Number.isInteger(opportunityId)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  const field = typeof body.field === "string" ? (body.field as SuggestableField) : undefined;
+  const details: string[] = [];
+  if (!field || !SUGGESTABLE_FIELDS.includes(field)) {
+    details.push(`field is required and must be one of ${SUGGESTABLE_FIELDS.join("|")}`);
+  }
+  if (typeof body.newValue !== "string" || body.newValue.trim() === "") {
+    details.push("newValue is required");
+  }
+  if (details.length > 0) {
+    res.status(400).json({ error: "validation_error", details });
+    return;
+  }
+
+  const result = await insertSuggestedEdit({
+    opportunityId,
+    field: field as SuggestableField,
+    newValue: body.newValue,
+    submittedBy: typeof body.submittedBy === "string" ? body.submittedBy : undefined,
+  });
+
+  if (!result.ok) {
+    if (result.reason === "not_found") {
+      res.status(404).json({ error: "not_found" });
+    } else {
+      res.status(400).json({ error: "validation_error", details: ["newValue matches the current value"] });
+    }
+    return;
+  }
+
+  res.status(201).json({ result: { id: result.id, status: "pending" } });
 });

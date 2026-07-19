@@ -1,18 +1,21 @@
 // Minimal admin panel: pending reviews queue + reports/disputes queue +
 // pending links queue (additional org links beyond "how to apply") + pending
-// icons queue (org profile icon submissions). It does not attempt to build
-// out opportunity-approval UI (that queue already has a working API at
-// GET/POST /api/admin/opportunities/* but no frontend; out of scope here).
+// icons queue (org profile icon submissions) + suggested edits queue
+// (single-field correction proposals against existing listings). It does not
+// attempt to build out opportunity-approval UI (that queue already has a
+// working API at GET/POST /api/admin/opportunities/* but no frontend; out of
+// scope here).
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports | links | icons
+  tab: "reviews", // reviews | reports | links | icons | suggestedEdits
   reviews: [],
   reports: [],
   links: [],
   icons: [],
+  suggestedEdits: [],
   guidance: "",
   loading: false,
   error: "",
@@ -64,11 +67,12 @@ async function login(username, password) {
 async function loadQueues() {
   setState({ loading: true, error: "" });
   try {
-    const [reviewsRes, reportsRes, linksRes, iconsRes] = await Promise.all([
+    const [reviewsRes, reportsRes, linksRes, iconsRes, suggestedEditsRes] = await Promise.all([
       apiFetch("/admin/reviews?status=pending"),
       apiFetch("/admin/reports?status=open"),
       apiFetch("/admin/links?status=pending"),
       apiFetch("/admin/icons/pending"),
+      apiFetch("/admin/suggested-edits?status=pending"),
     ]);
     setState({
       reviews: reviewsRes.results,
@@ -76,6 +80,7 @@ async function loadQueues() {
       reports: reportsRes.results,
       links: linksRes.results,
       icons: iconsRes.results,
+      suggestedEdits: suggestedEditsRes.results,
       loading: false,
     });
   } catch (err) {
@@ -140,6 +145,24 @@ async function approveIcon(id) {
 async function rejectIcon(id) {
   try {
     await apiFetch(`/admin/opportunities/${id}/icon/reject`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function approveSuggestedEdit(id) {
+  try {
+    await apiFetch(`/admin/suggested-edits/${id}/approve`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function rejectSuggestedEdit(id) {
+  try {
+    await apiFetch(`/admin/suggested-edits/${id}/reject`, { method: "POST" });
     loadQueues();
   } catch (err) {
     setState({ error: err.message });
@@ -272,6 +295,53 @@ function renderIconsTab() {
     .join("");
 }
 
+const SUGGEST_EDIT_FIELD_LABELS = { name: "Name", description: "Description", link: "Link", majors: "Majors sought" };
+
+// Simple side-by-side strikethrough-old / highlighted-new display — no real
+// diff algorithm, these are short field values (a name/description/link, or
+// a majors list), not documents. `majors` values are stored/submitted as
+// JSON-serialized arrays; pretty-print them as a comma list for readability.
+function formatSuggestedValue(field, value) {
+  if (value === null || value === undefined) return "(empty)";
+  if (field !== "majors") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.join(", ") || "(none)" : value;
+  } catch {
+    return value;
+  }
+}
+
+function renderSuggestedEditsTab() {
+  if (state.suggestedEdits.length === 0) {
+    return `<div class="review-empty">No pending suggested edits.</div>`;
+  }
+  return state.suggestedEdits
+    .map(
+      (s) => `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-head">
+        <div class="admin-queue-item-title">
+          <span class="suggest-edit-field-badge">${escapeHtml(SUGGEST_EDIT_FIELD_LABELS[s.field] || s.field)}</span>
+          ${escapeHtml(s.opportunityName)} <span class="admin-queue-item-meta">(opportunity #${s.opportunityId})</span>
+        </div>
+        <div class="admin-queue-item-meta">${escapeHtml((s.createdAt || "").slice(0, 16))}</div>
+      </div>
+      <div class="suggest-edit-diff">
+        <div class="suggest-edit-diff-old">${escapeHtml(formatSuggestedValue(s.field, s.oldValue))}</div>
+        <div class="suggest-edit-diff-new">${escapeHtml(formatSuggestedValue(s.field, s.newValue))}</div>
+      </div>
+      ${s.submittedBy ? `<div class="admin-queue-item-meta">Submitted by: ${escapeHtml(s.submittedBy)}</div>` : ""}
+      <div class="admin-queue-actions">
+        <button class="admin-btn approve" data-action="approve-suggested-edit" data-id="${s.id}">Approve</button>
+        <button class="admin-btn reject" data-action="reject-suggested-edit" data-id="${s.id}">Reject</button>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+}
+
 function renderDashboard() {
   return `
     <main class="view-admin">
@@ -281,6 +351,7 @@ function renderDashboard() {
         <button class="${state.tab === "reports" ? "active" : ""}" data-action="tab-reports">Reports / Disputes (${state.reports.length})</button>
         <button class="${state.tab === "links" ? "active" : ""}" data-action="tab-links">Links (${state.links.length})</button>
         <button class="${state.tab === "icons" ? "active" : ""}" data-action="tab-icons">Pending Icons (${state.icons.length})</button>
+        <button class="${state.tab === "suggestedEdits" ? "active" : ""}" data-action="tab-suggested-edits">Suggested Edits (${state.suggestedEdits.length})</button>
       </div>
       ${
         state.tab === "reviews"
@@ -289,7 +360,9 @@ function renderDashboard() {
           ? `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
           : state.tab === "links"
           ? `<div class="admin-guidance">Additional org links (apply-adjacent, homepage, social, other) submitted either standalone or alongside a new org submission. Approve only links that look legitimate and match the organization.</div>`
-          : `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
+          : state.tab === "icons"
+          ? `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
+          : `<div class="admin-guidance">Anonymous corrections proposed for a single field on an existing listing. Approving writes the new value directly onto the live listing (and refreshes search); rejecting leaves the listing untouched.</div>`
       }
       ${state.error ? `<div class="form-error" style="margin-bottom:14px;">${escapeHtml(state.error)}</div>` : ""}
       ${
@@ -301,7 +374,9 @@ function renderDashboard() {
           ? renderReportsTab()
           : state.tab === "links"
           ? renderLinksTab()
-          : renderIconsTab()
+          : state.tab === "icons"
+          ? renderIconsTab()
+          : renderSuggestedEditsTab()
       }
     </main>
   `;
@@ -348,6 +423,9 @@ function wireEvents() {
       case "tab-icons":
         setState({ tab: "icons" });
         break;
+      case "tab-suggested-edits":
+        setState({ tab: "suggestedEdits" });
+        break;
       case "approve-review":
         approveReview(node.dataset.id);
         break;
@@ -368,6 +446,12 @@ function wireEvents() {
         break;
       case "reject-icon":
         rejectIcon(Number(node.dataset.id));
+        break;
+      case "approve-suggested-edit":
+        approveSuggestedEdit(Number(node.dataset.id));
+        break;
+      case "reject-suggested-edit":
+        rejectSuggestedEdit(Number(node.dataset.id));
         break;
     }
   });

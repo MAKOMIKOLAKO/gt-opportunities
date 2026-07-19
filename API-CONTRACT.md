@@ -110,31 +110,59 @@ dispute against a specific review (as opposed to a general report about the
 opportunity itself); `opportunityId` is still carried for context in that
 case. `reporterContact` is optional and never required.
 
+<<<<<<< HEAD
 ### Link shape (`LinkDTO`, Additional org links)
 
 Additional org links beyond "how to apply" — `opportunities.link` remains
 the single primary how-to-apply link; this is a proper child table for
 everything else (apply-adjacent, homepage, social, other), following the
 same pending -> admin-review -> approved lifecycle as reviews/reports.
+=======
+### Suggested edit shape (`SuggestedEditDTO`, Addition: suggest edits on existing listings)
+
+A proposed correction to a single field on an existing opportunity, awaiting
+admin review.
+>>>>>>> worktree-agent-acb494583080bd141
 
 ```json
 {
   "id": 1,
   "opportunityId": 1,
+<<<<<<< HEAD
   "label": "Team Instagram",
   "url": "https://instagram.com/example",
   "type": "social",
   "status": "approved",
   "submittedBy": null,
   "createdAt": "2026-07-18 13:44:53",
+=======
+  "field": "description",
+  "oldValue": "Old description text",
+  "newValue": "Corrected description text",
+  "submittedBy": "gtusername@gatech.edu",
+  "status": "pending",
+  "createdAt": "2026-07-19 09:00:00",
+>>>>>>> worktree-agent-acb494583080bd141
   "reviewedBy": null,
   "reviewedAt": null
 }
 ```
 
+<<<<<<< HEAD
 `type` is one of `apply | homepage | social | other` — a plain text column
 with app-level validation, deliberately extensible later. `status` is one
 of `pending | approved | rejected`.
+=======
+`field` is one of `name | description | link | majors` — a fixed
+server-side allowlist (`SUGGESTABLE_FIELDS` in
+`backend/src/db/data-access.ts`); arbitrary/internal fields (`status`,
+`source`, `meta`, `id`, etc.) can never be suggested. `oldValue` is a
+server-captured snapshot of the field's value at submission time (never
+client-supplied) — nullable because `link` itself is nullable. For the
+`majors` field, both `oldValue` and `newValue` are the JSON-serialized array
+string, matching how `majors` is stored on the opportunity row. `status` is
+one of `pending | approved | rejected`.
+>>>>>>> worktree-agent-acb494583080bd141
 
 ---
 
@@ -234,15 +262,25 @@ Response `400`: `{ "error": "validation_error", "details": [...] }`
 Response `404`: `{ "error": "not_found" }` if `:id` isn't a currently
 approved review.
 
+<<<<<<< HEAD
 ### `POST /api/opportunities/:id/links`
 
 Public submission of an additional org link (Additional org links). No
 auth. Creates a `status = "pending"` link — never directly visible until
 an admin approves it.
+=======
+### `POST /api/opportunities/:id/suggest-edit`
+
+Suggest a correction to a single field on an existing, publicly visible
+opportunity (Addition: suggest edits on existing listings). No auth
+required. Creates a `status = "pending"` row in the Suggested Edits admin
+queue — never applied to the live listing until an admin approves it.
+>>>>>>> worktree-agent-acb494583080bd141
 
 Request body:
 ```json
 {
+<<<<<<< HEAD
   "label": "Team Instagram",
   "url": "https://instagram.com/example",
   "type": "social",
@@ -254,6 +292,29 @@ Response `201`: `{ "result": { "id": 1, "status": "pending" } }`
 Response `400`: `{ "error": "validation_error", "details": [...] }`
 Response `404`: `{ "error": "not_found" }` if the opportunity isn't
 publicly visible (approved).
+=======
+  "field": "description",
+  "newValue": "Corrected description text",
+  "submittedBy": "gtusername@gatech.edu"
+}
+```
+`field` is required and must be one of `name | description | link | majors`
+(server-enforced allowlist — any other value is rejected, not silently
+mapped). For `field: "majors"`, `newValue` must be the JSON-serialized array
+string (e.g. `"[\"CS\",\"ME\"]"`), matching the stored representation.
+`submittedBy` is optional, free text (e.g. an email), never validated as an
+identity.
+
+`oldValue` is NOT accepted from the client — the server reads the field's
+current value itself before inserting the suggestion, and rejects the
+request as a no-op if `newValue` is identical to the current value.
+
+Response `201`: `{ "result": { "id": 1, "status": "pending" } }`
+Response `400`: `{ "error": "validation_error", "details": [...] }` — bad/missing
+`field`, missing `newValue`, or `newValue` identical to the current value.
+Response `404`: `{ "error": "not_found" }` if the opportunity isn't publicly
+visible (approved).
+>>>>>>> worktree-agent-acb494583080bd141
 
 ### `GET /api/tags`
 
@@ -501,6 +562,7 @@ Marks a report `resolved`, stamping `resolvedBy`/`resolvedAt`.
 Response `200`: `{ "result": Report }`
 Response `404`: `{ "error": "not_found" }`
 
+<<<<<<< HEAD
 ### `GET /api/admin/links?status=pending` (Additional org links)
 
 List additional-org-link submissions for the moderation queue, each linked
@@ -524,6 +586,56 @@ Marks a link `rejected`, stamping `reviewedBy`/`reviewedAt`. Never appears
 in any public response.
 
 Response `200`: `{ "result": Link }`
+=======
+### `GET /api/admin/suggested-edits?status=pending` (Addition: suggest edits on existing listings)
+
+List suggested edits for the moderation queue, each linked to its
+opportunity via `opportunityId` **and** `opportunityName` (same shape as the
+reviews queue — no second lookup needed to show what's being edited).
+Backed by `getSuggestedEditsForAdmin()`. `status` optional
+(`pending | approved | rejected`); omitted = all statuses.
+
+Response `200`:
+```json
+{
+  "results": [
+    {
+      "id": 1,
+      "opportunityId": 1,
+      "opportunityName": "Test Robotics Club",
+      "field": "description",
+      "oldValue": "Old description text",
+      "newValue": "Corrected description text",
+      "submittedBy": "gtusername@gatech.edu",
+      "status": "pending",
+      "createdAt": "2026-07-19 09:00:00",
+      "reviewedBy": null,
+      "reviewedAt": null
+    }
+  ],
+  "count": 1
+}
+```
+
+### `POST /api/admin/suggested-edits/:id/approve`
+
+Approves a pending suggested edit: writes `newValue` into the live
+opportunity's `field` column (for `majors`, parses the JSON-serialized array
+and re-serializes through `setMajors`), stamps the suggested-edit row
+`approved`/`reviewedBy`/`reviewedAt`, and re-runs the opportunity's search
+index refresh (name/description/majors all feed search). Both writes happen
+in one transaction.
+
+Response `200`: `{ "result": SuggestedEdit }`
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/suggested-edits/:id/reject`
+
+Marks a suggested edit `rejected`, stamping `reviewedBy`/`reviewedAt`. No
+write to the live opportunity row.
+
+Response `200`: `{ "result": SuggestedEdit }`
+>>>>>>> worktree-agent-acb494583080bd141
 Response `404`: `{ "error": "not_found" }`
 
 ---
