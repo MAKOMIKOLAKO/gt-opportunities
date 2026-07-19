@@ -1,6 +1,6 @@
 // Embedding generation for the "related organizations" feature (cross-
 // category matching over `opportunities.embedding`, a pgvector column — see
-// schema.ts). Uses OpenAI's `text-embedding-3-small` model (1536 dims) via
+// schema.ts). Uses OpenAI's `text-embedding-3-large` model (3072 dims) via
 // plain `fetch` — no SDK dependency needed for a single endpoint.
 //
 // OPENAI_API_KEY is optional at the infrastructure level: if it's unset,
@@ -13,8 +13,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { opportunities, opportunityTags, tags } from "../db/schema.js";
 
-const EMBEDDING_MODEL = "text-embedding-3-small";
-const EMBEDDING_DIMENSIONS = 1536;
+const EMBEDDING_MODEL = "text-embedding-3-large";
+const EMBEDDING_DIMENSIONS = 3072;
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 
 let warnedMissingKey = false;

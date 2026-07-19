@@ -33,15 +33,15 @@ const tsvector = customType<{ data: string }>({
 
 // pgvector's `vector(n)` type — same customType escape hatch as `tsvector`
 // above (drizzle-orm has no built-in pgvector helper either). Dimension is
-// fixed at 1536 to match OpenAI's `text-embedding-3-small` output (see
+// fixed at 3072 to match OpenAI's `text-embedding-3-large` output (see
 // backend/src/lib/embeddings.ts). Only ever written through a raw pgvector
 // literal string (`[0.1,0.2,...]`, see embedOpportunity()) and read through
 // the `<=>` cosine-distance operator in raw `sql` (see
 // backend/src/lib/related-opportunities.ts) — never touched as a plain JS
 // array by drizzle's query builder.
-const vector1536 = customType<{ data: string }>({
+const vector3072 = customType<{ data: string }>({
   dataType() {
-    return "vector(1536)";
+    return "vector(3072)";
   },
 });
 
@@ -86,7 +86,7 @@ export const opportunities = pgTable(
     // populated by app code (embedOpportunity()) whenever OPENAI_API_KEY is
     // set, NOT a generated column, and legitimately null until a live key
     // is configured or the one-off backfill script is run.
-    embedding: vector1536("embedding"),
+    embedding: vector3072("embedding"),
     source: text("source").$type<OpportunitySource>().notNull(),
     status: text("status").$type<OpportunityStatus>().notNull().default("pending"),
     submittedBy: text("submitted_by"),

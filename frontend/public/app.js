@@ -406,8 +406,14 @@ async function loadDetail(id) {
         <p class="detail-desc">${escapeHtml(opp.description || "")}</p>
 
         <div class="detail-info-grid">
+          ${
+            opp.type === "club"
+              ? ""
+              : `
           <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
           <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+          `
+          }
           <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
         </div>
 

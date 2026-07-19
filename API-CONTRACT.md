@@ -209,7 +209,7 @@ Also includes a `relatedOrgs` array (Related Organizations feature):
 `reviews`/`relatedOrgs` themselves — no nesting), ordered most-related
 first. Backed by a precomputed cache (`related_opportunities` table),
 never computed live per request — see `BUILD_NOTES.md`. Matching is
-embedding-based (cosine similarity over `text-embedding-3-small`
+embedding-based (cosine similarity over `text-embedding-3-large`
 embeddings of name + description + tag labels) with a small tag-overlap
 boost on top; matching is deliberately **cross-category** — `type`
 (vip/lab/club) is never used as a scoring signal, so a VIP team and an
