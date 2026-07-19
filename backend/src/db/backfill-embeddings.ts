@@ -15,6 +15,19 @@
 // its one-time warning and returns false for every row — this script will
 // report 0/N backfilled rather than erroring, which is the correct behavior
 // (nothing to do yet).
+//
+// Embedding and related-orgs recompute are deliberately done in two SEPARATE
+// passes, not interleaved row-by-row. recomputeRelated() only considers
+// candidates that already have a non-null embedding (see
+// related-opportunities.ts), and on a full re-backfill (e.g. right after a
+// model-migration null-out) almost every row starts with no embedding. If we
+// recomputed a row's related-orgs immediately after embedding it, the first
+// rows processed in the loop would see a nearly-empty candidate pool and get
+// stuck with an empty/tiny related-orgs cache forever — this is exactly what
+// happened to the VIP rows after the text-embedding-3-large migration, since
+// they landed early in the scan order. Embedding ALL rows first, then
+// recomputing related-orgs for all of them once every embedding exists,
+// avoids that ordering bug.
 import { isNull } from "drizzle-orm";
 import { appendFile } from "node:fs/promises";
 import { db, closePool } from "./client.js";
@@ -33,6 +46,7 @@ async function main() {
   let embedded = 0;
   let skipped = 0;
   let failed = 0;
+  const embeddedIds: number[] = [];
   for (const row of rows) {
     try {
       const ok = await embedOpportunity(row.id);
@@ -40,12 +54,21 @@ async function main() {
         skipped++;
         continue;
       }
-      await recomputeRelated(row.id);
       embedded++;
+      embeddedIds.push(row.id);
       console.log(`  [embedded] ${row.id}: ${row.name}`);
     } catch (err) {
       failed++;
       console.error(`  [failed] ${row.id}: ${row.name} —`, (err as Error).message);
+    }
+  }
+
+  console.log(`\nRecomputing related-orgs for ${embeddedIds.length} newly-embedded row(s)...`);
+  for (const id of embeddedIds) {
+    try {
+      await recomputeRelated(id);
+    } catch (err) {
+      console.error(`  [related-orgs failed] ${id} —`, (err as Error).message);
     }
   }
 
