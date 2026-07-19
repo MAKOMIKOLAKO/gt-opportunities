@@ -73,6 +73,19 @@ export async function recomputeRelated(opportunityId: number): Promise<void> {
 
   const candidateIds = candidates.rows.map((c) => c.id);
 
+  // Postgres array literal built by hand rather than interpolating the JS
+  // array directly (`ANY(${candidateIds})`) — Drizzle's `sql` tag expands a
+  // bare array parameter into a parenthesized parameter LIST, e.g.
+  // `ANY(($1, $2))`, not an array expression. Postgres reads that as a row
+  // constructor for 2+ candidates ("op ANY/ALL (array) requires array on
+  // right side" — every recomputeRelated() call after the first opportunity
+  // failed with exactly this in production) and, for exactly 1 candidate,
+  // collapses the parens and coerces the bare scalar as array-literal text
+  // ("malformed array literal: '852'", also observed). Verified against
+  // drizzle-orm's actual PgDialect().sqlToQuery() output before/after this
+  // fix. The explicit `{...}` literal + `::int[]` cast sidesteps both.
+  const candidateIdsLiteral = `{${candidateIds.join(",")}}`;
+
   // Tag overlap between the target and each candidate — a soft boost only,
   // never a filter or a same-type bonus. Deliberately does NOT reference
   // `type` anywhere: a VIP team and an Engage club with zero shared tags
@@ -82,7 +95,7 @@ export async function recomputeRelated(opportunityId: number): Promise<void> {
         FROM opportunity_tags ot1
         JOIN opportunity_tags ot2 ON ot2.tag_id = ot1.tag_id
         WHERE ot1.opportunity_id = ${opportunityId}
-          AND ot2.opportunity_id = ANY(${candidateIds})
+          AND ot2.opportunity_id = ANY(${candidateIdsLiteral}::int[])
         GROUP BY ot2.opportunity_id`
   );
   const overlapByCandidateId = new Map(overlapRows.rows.map((r) => [Number(r.related_id), Number(r.overlap_count)]));
