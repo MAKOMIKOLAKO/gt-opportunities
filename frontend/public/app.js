@@ -386,12 +386,15 @@ function renderDetailShell() {
   `;
 }
 
-async function loadDetail(id) {
-  const container = el("#detailContent");
-  try {
-    const opp = decorateOrg(await fetchOpportunity(id));
+// Detail data is cached per-id so that opening/closing the "Suggest an
+// edit" or "Submit an icon" modals — which go through the same setState()
+// -> render() path as everything else — doesn't refetch and flash the
+// whole detail pane back to a loading state on every click.
+let detailCache = {};
+
+function renderDetailBody(opp) {
     const d = detailFields(opp);
-    container.innerHTML = `
+    return `
       <div class="detail-card">
         <div class="detail-header">
           ${renderOrgIcon(opp, "lg")}
@@ -445,8 +448,25 @@ async function loadDetail(id) {
 
       ${renderRelatedOrgsBlock(opp)}
     `;
+}
+
+async function loadDetail(id, { forceRefresh = false } = {}) {
+  const container = el("#detailContent");
+  const cached = detailCache[id];
+  if (cached && !forceRefresh) {
+    container.innerHTML = renderDetailBody(cached);
+    return;
+  }
+  try {
+    const opp = decorateOrg(await fetchOpportunity(id));
+    detailCache[id] = opp;
+    // The container may have been swapped out (view changed / user
+    // navigated away) while this fetch was in flight.
+    if (state.view !== "detail" || state.selectedId !== id) return;
+    el("#detailContent").innerHTML = renderDetailBody(opp);
   } catch (err) {
-    container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
+    if (state.view !== "detail" || state.selectedId !== id) return;
+    el("#detailContent").innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
 }
 
