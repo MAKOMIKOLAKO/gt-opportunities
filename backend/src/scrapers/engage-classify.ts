@@ -22,6 +22,8 @@ import { setMajors, setMeta } from "../db/json-columns.js";
 import { refreshSearchBlob } from "../db/data-access.js";
 import { TAG_VOCABULARY } from "../db/tag-vocabulary.js";
 import { classifyOrg } from "./engage-classify-rules.js";
+import { embedOpportunity } from "../lib/embeddings.js";
+import { recomputeRelated } from "../lib/related-opportunities.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RAW_CACHE_DIR = path.resolve(__dirname, "../../../data/raw-cache/engage");
@@ -153,6 +155,17 @@ async function upsertOpportunity(
   // Without this, search_blob/search_vector stay at their empty defaults and
   // the row never surfaces in full-text search — see vip.ts for the same pattern.
   await refreshSearchBlob(opportunityId);
+
+  // Re-embed and recompute related orgs per org classified/reclassified.
+  // Same "never fail the run" wrapping as vip.ts — a missing OPENAI_API_KEY
+  // just means embedOpportunity() returns false and this is a no-op.
+  try {
+    if (await embedOpportunity(opportunityId)) {
+      await recomputeRelated(opportunityId);
+    }
+  } catch (err) {
+    console.error(`  embedding/related-orgs step failed for org ${opportunityId}:`, (err as Error).message);
+  }
 
   return opportunityId;
 }
