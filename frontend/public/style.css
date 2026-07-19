@@ -315,29 +315,31 @@ main {
 .org-icon.lg { width: 56px; height: 56px; border-radius: 12px; font-size: 19px; }
 .org-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 
-/* ---------- Org icon submission (icon submission feature) ---------- */
+/* ---------- Detail page utility actions (submit icon / suggest edit) ---------- */
+/* Deliberately small and unobtrusive — incidental actions, not part of the
+   normal browsing flow, so they must never compete with the main content. */
 
-.icon-submit-block {
+.detail-utility-row {
   margin-top: 22px;
-  padding-top: 18px;
+  padding-top: 14px;
   border-top: 1.5px solid var(--pi-mile);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.icon-submit-block .detail-tags-label { margin-bottom: 6px; }
-.icon-submit-block-sub { font-size: 12px; color: var(--gray-matter); margin-bottom: 10px; }
-.icon-submit-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.icon-submit-form input[type="url"] {
-  flex: 1;
-  min-width: 220px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1.5px solid var(--pi-mile);
-  font-size: 13px;
+.utility-link-btn {
+  background: none;
+  border: none;
+  color: var(--gray-matter);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
 }
-.icon-submit-form input[type="url"]:focus { border-color: var(--gold); }
-.icon-submit-status { font-size: 12px; margin-top: 8px; }
-.icon-submit-status.pending { color: var(--gray-matter); }
-.icon-submit-status.success { color: #1f7a3d; }
-.icon-submit-status.error { color: #9c2b23; }
+.utility-link-btn:hover { color: var(--navy); }
+.utility-sep { color: var(--pi-mile); font-size: 12px; }
+.utility-feedback { margin-top: 6px; font-size: 12px; color: #1f7a3d; }
+
 .icon-pending-note {
   font-size: 12px;
   color: var(--gray-matter);
@@ -775,38 +777,9 @@ main {
 }
 
 /* ---------- Suggest an edit ---------- */
-
-.suggest-edit-block {
-  margin: 20px 0;
-  padding-top: 16px;
-  border-top: 1px solid #EFF1EE;
-}
-.suggest-edit-toggle {
-  background: none;
-  border: none;
-  color: var(--gray-matter);
-  font-size: 12.5px;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
-}
-.suggest-edit-toggle:hover { color: var(--navy); }
-.suggest-edit-message { margin-top: 8px; font-size: 12.5px; color: #1f7a3d; }
-.suggest-edit-block.open {
-  background: var(--diploma);
-  border: 1px solid var(--pi-mile);
-  border-radius: 10px;
-  padding: 16px 18px;
-}
-.suggest-edit-title { font-size: 13px; font-weight: 800; color: var(--navy); margin-bottom: 12px; }
-.suggest-edit-row { margin-bottom: 12px; }
-.suggest-edit-block label { display: block; font-size: 12px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
-.suggest-edit-block select,
-.suggest-edit-block textarea {
-  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
-  font-size: 13.5px; background: #fff; color: var(--ink); resize: vertical; margin-bottom: 4px;
-}
-.suggest-edit-block #suggestEditError { margin: 8px 0; }
+/* The submission form itself now reuses .review-form-modal (see that
+   block above); these are the diff/badge styles used to render suggested
+   edits in the admin review queue. */
 
 /* ---------- Admin (Addition 3: reviews + reports queues; suggested edits) ---------- */
 

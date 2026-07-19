@@ -103,8 +103,9 @@ const state = {
   lastSubmittedName: "",
   reviewFormOpportunityId: null,
   flagReviewId: null,
-  iconSubmit: { opportunityId: null, message: "", kind: "" },
-  suggestEditOpen: false,
+  iconFormOpportunityId: null,
+  iconSubmitMessage: "",
+  suggestEditFormOpportunityId: null,
   suggestEditMessage: "",
 };
 
@@ -425,9 +426,8 @@ async function loadDetail(id) {
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
 
-        ${renderIconSubmitBlock(opp)}
         ${renderLinksBlock(opp)}
-        ${renderSuggestEditBlock(opp)}
+        ${renderDetailUtilityRow(opp)}
 
         ${renderReviewsBlock(opp)}
       </div>
@@ -440,29 +440,46 @@ async function loadDetail(id) {
 }
 
 // ---------------------------------------------------------------------
-// Rendering — org icon submission (icon submission feature)
+// Rendering — detail page utility actions ("Submit an icon" / "Suggest an
+// edit"). Kept as small, unobtrusive text links rather than full inline
+// sections — these are rare, incidental actions, not part of the normal
+// browsing flow, so they open a modal instead of eating page real estate.
 //
-// Scoped to the detail page only, not the "submit an org" form — a brand
-// new org submission has no id until an admin approves it, so there's
-// nothing for /api/opportunities/:id/icon to attach to yet. (See
-// BUILD_NOTES.md for this as a documented assumption, not an oversight.)
+// Icon submission is scoped to the detail page only, not the "submit an
+// org" form — a brand new org submission has no id until an admin
+// approves it, so there's nothing for /api/opportunities/:id/icon to
+// attach to yet. (See BUILD_NOTES.md for this as a documented assumption,
+// not an oversight.)
 // ---------------------------------------------------------------------
 
-function renderIconSubmitBlock(opp) {
-  const status = state.iconSubmit;
-  const statusMarkup =
-    status.opportunityId === opp.id && status.message
-      ? `<div class="icon-submit-status ${status.kind}">${escapeHtml(status.message)}</div>`
-      : "";
+function renderDetailUtilityRow(opp) {
+  const feedback = state.iconSubmitMessage || state.suggestEditMessage;
   return `
-    <div class="icon-submit-block">
-      <div class="detail-tags-label">Submit an icon</div>
-      <div class="icon-submit-block-sub">Upload a logo/icon image for this org (PNG, JPG, GIF, WEBP, or SVG, max 2MB). A moderator reviews it before it goes live.</div>
-      <form id="iconForm" class="icon-submit-form" data-id="${opp.id}">
-        <input type="file" name="icon" required accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" />
-        <button type="submit" class="submit-btn">Submit icon</button>
-      </form>
-      ${statusMarkup}
+    <div class="detail-utility-row">
+      <button class="utility-link-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+      <span class="utility-sep">&middot;</span>
+      <button class="utility-link-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+    </div>
+    ${feedback ? `<div class="utility-feedback">${escapeHtml(feedback)}</div>` : ""}
+  `;
+}
+
+function renderIconFormModal() {
+  if (!state.iconFormOpportunityId) return "";
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-icon-form">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Submit an icon</h3>
+        <div class="modal-sub">Upload a logo/icon image for this org (PNG, JPG, GIF, WEBP, or SVG, max 2MB). A moderator reviews it before it goes live.</div>
+        <form id="iconForm" data-id="${state.iconFormOpportunityId}">
+          <input type="file" name="icon" required accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" />
+          <div id="iconFormError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-icon-form">Cancel</button>
+            <button type="submit" class="submit-btn">Submit icon</button>
+          </div>
+        </form>
+      </div>
     </div>
   `;
 }
@@ -542,22 +559,23 @@ async function handleIconSubmit(e) {
   e.preventDefault();
   const form = e.target;
   const opportunityId = Number(form.dataset.id);
+  const errorEl = el("#iconFormError");
+  errorEl.innerHTML = "";
   const file = form.icon.files[0];
   if (!file) {
-    setState({ iconSubmit: { opportunityId, message: "Choose an image file first.", kind: "error" } });
+    errorEl.innerHTML = `<div class="form-error">Choose an image file first.</div>`;
     return;
   }
   const btn = form.querySelector("button[type=submit]");
   btn.disabled = true;
   btn.textContent = "Submitting…";
-  setState({ iconSubmit: { opportunityId, message: "Submitting…", kind: "pending" } });
   try {
     await submitIcon(opportunityId, file);
-    setState({
-      iconSubmit: { opportunityId, message: "Thanks — submitted for moderator review.", kind: "success" },
-    });
+    setState({ iconFormOpportunityId: null, iconSubmitMessage: "Thanks — submitted for moderator review." });
   } catch (err) {
-    setState({ iconSubmit: { opportunityId, message: err.message, kind: "error" } });
+    btn.disabled = false;
+    btn.textContent = "Submit icon";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -582,40 +600,33 @@ function renderRelatedOrgCard(o) {
 // ---------------------------------------------------------------------
 // Rendering — suggest an edit
 //
-// Lightweight, unobtrusive "propose a correction" affordance: collapsed by
-// default (a small link), expands into a one-field-at-a-time form. Posts to
+// Lightweight, unobtrusive "propose a correction" affordance, opened from
+// the small utility link in renderDetailUtilityRow(). Posts to
 // POST /api/opportunities/:id/suggest-edit and lands in the admin
 // "Suggested Edits" queue as a pending row — nothing here touches the live
 // listing directly.
 // ---------------------------------------------------------------------
 
-function renderSuggestEditBlock(opp) {
-  if (!state.suggestEditOpen) {
-    return `
-      <div class="suggest-edit-block">
-        <button class="suggest-edit-toggle" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit to this listing</button>
-        ${state.suggestEditMessage ? `<div class="suggest-edit-message">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
-      </div>
-    `;
-  }
+function renderSuggestEditModal() {
+  if (!state.suggestEditFormOpportunityId) return "";
   return `
-    <div class="suggest-edit-block open">
-      <div class="suggest-edit-title">Suggest an edit</div>
-      <form id="suggestEditForm" data-id="${opp.id}">
-        <div class="suggest-edit-row">
+    <div class="review-form-modal-backdrop" data-action="close-suggest-edit">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Suggest an edit</h3>
+        <form id="suggestEditForm" data-id="${state.suggestEditFormOpportunityId}">
           <label>Field</label>
-          <select name="field" required>
+          <select name="field" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:13.5px;margin-bottom:14px;">
             ${SUGGEST_EDIT_FIELDS.map((f) => `<option value="${f.key}">${escapeHtml(f.label)}</option>`).join("")}
           </select>
-        </div>
-        <label>Proposed new value</label>
-        <textarea name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
-        <div id="suggestEditError"></div>
-        <div class="review-form-actions">
-          <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
-          <button type="submit" class="submit-btn">Submit suggestion</button>
-        </div>
-      </form>
+          <label>Proposed new value</label>
+          <textarea name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
+          <div id="suggestEditError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
+            <button type="submit" class="submit-btn">Submit suggestion</button>
+          </div>
+        </form>
+      </div>
     </div>
   `;
 }
@@ -905,7 +916,14 @@ function render() {
   else if (state.view === "submit") body = renderSubmit();
   else body = renderDirectory();
 
-  app.innerHTML = renderHeader() + body + renderFooter() + renderReviewFormModal() + renderFlagFormModal();
+  app.innerHTML =
+    renderHeader() +
+    body +
+    renderFooter() +
+    renderReviewFormModal() +
+    renderFlagFormModal() +
+    renderIconFormModal() +
+    renderSuggestEditModal();
   wireEvents();
 
   if (state.view === "directory") {
@@ -937,7 +955,10 @@ function wireEvents() {
     // Cancel/exit buttons live inside data-stop-close too, and must still
     // close the modal when clicked directly.
     if (
-      (node.dataset.action === "close-review-form" || node.dataset.action === "close-flag-form") &&
+      (node.dataset.action === "close-review-form" ||
+        node.dataset.action === "close-flag-form" ||
+        node.dataset.action === "close-icon-form" ||
+        node.dataset.action === "close-suggest-edit") &&
       node.classList.contains("review-form-modal-backdrop") &&
       e.target.closest("[data-stop-close]")
     ) {
@@ -963,7 +984,14 @@ function wireEvents() {
         setState({ query: "", typeFilter: "", discipline: "All Disciplines" });
         break;
       case "open-detail":
-        setState({ view: "detail", selectedId: Number(node.dataset.id), suggestEditOpen: false, suggestEditMessage: "" });
+        setState({
+          view: "detail",
+          selectedId: Number(node.dataset.id),
+          suggestEditFormOpportunityId: null,
+          suggestEditMessage: "",
+          iconFormOpportunityId: null,
+          iconSubmitMessage: "",
+        });
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
@@ -992,11 +1020,19 @@ function wireEvents() {
         if (row) row.remove();
         break;
       }
+      case "open-icon-form":
+        setState({ iconFormOpportunityId: Number(node.dataset.id), iconSubmitMessage: "" });
+        break;
+      case "close-icon-form":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ iconFormOpportunityId: null });
+        break;
       case "open-suggest-edit":
-        setState({ suggestEditOpen: true, suggestEditMessage: "" });
+        setState({ suggestEditFormOpportunityId: Number(node.dataset.id), suggestEditMessage: "" });
         break;
       case "close-suggest-edit":
-        setState({ suggestEditOpen: false });
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ suggestEditFormOpportunityId: null });
         break;
     }
   });
@@ -1084,7 +1120,7 @@ async function handleSuggestEditSubmit(e) {
   btn.textContent = "Submitting…";
   try {
     await submitSuggestEdit(opportunityId, form.field.value, form.newValue.value.trim());
-    setState({ suggestEditOpen: false, suggestEditMessage: "Thanks — your suggestion was submitted for review." });
+    setState({ suggestEditFormOpportunityId: null, suggestEditMessage: "Thanks — your suggestion was submitted for review." });
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Submit suggestion";
