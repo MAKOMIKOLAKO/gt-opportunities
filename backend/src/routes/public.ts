@@ -6,6 +6,7 @@ import {
   getAllTags,
   getApprovedReviews,
   getApprovedReviewById,
+  getRelatedOpportunities,
   insertReview,
   insertReport,
   submitIconPending,
@@ -46,7 +47,8 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
   }
   const reviews = await getApprovedReviews(id);
   const links = await getApprovedLinks(id);
-  res.json({ result: { ...result, reviews, links } });
+  const relatedOrgs = await getRelatedOpportunities(id);
+  res.json({ result: { ...result, reviews, links, relatedOrgs } });
 });
 
 // Basic content check before it reaches the admin pending-icon queue: must

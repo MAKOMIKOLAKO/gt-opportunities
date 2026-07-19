@@ -675,6 +675,43 @@ main {
   font-size: 12.5px;
 }
 
+/* ---------- Related organizations ---------- */
+/* Cross-category, embedding-based matches (see app.js / API-CONTRACT.md) —
+   deliberately reuses the .org-card look from the directory grid so a
+   related org reads as "the same kind of thing you were just looking at,"
+   just in a horizontally-scrollable row instead of a grid cell. Hidden
+   entirely by app.js when relatedOrgs is empty (no empty-state UI here). */
+
+.related-orgs-block {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #EFF1EE;
+}
+.related-orgs-block h2 {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--navy);
+  margin: 0 0 14px;
+}
+.related-orgs-scroller {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+}
+.related-org-card {
+  flex: 0 0 260px;
+  scroll-snap-align: start;
+}
+.related-orgs-scroller::-webkit-scrollbar { height: 8px; }
+.related-orgs-scroller::-webkit-scrollbar-track { background: transparent; }
+.related-orgs-scroller::-webkit-scrollbar-thumb {
+  background: var(--pi-mile);
+  border-radius: 8px;
+}
+.related-orgs-scroller::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
 /* ---------- Reviews (Addition 3) ---------- */
 
 .reviews-block { margin: 28px 0; padding-top: 20px; border-top: 1px solid #EFF1EE; }

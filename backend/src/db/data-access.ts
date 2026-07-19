@@ -8,7 +8,7 @@
 // Postgres note: every function here is now async (the Neon driver has no
 // synchronous mode the way better-sqlite3 did) — see BUILD_NOTES.md. Callers
 // (routes, scrapers) must `await` these.
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "./client.js";
 import {
   opportunities,
@@ -17,6 +17,7 @@ import {
   reviews,
   reports,
   links,
+  relatedOpportunities,
   type OpportunityType,
   type OpportunityStatus,
   type ReviewStatus,
@@ -26,6 +27,8 @@ import {
   type LinkStatus,
 } from "./schema.js";
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
+import { embedOpportunity } from "../lib/embeddings.js";
+import { recomputeRelated } from "../lib/related-opportunities.js";
 
 export interface OpportunityDTO {
   id: number;
@@ -338,6 +341,23 @@ export async function getByIdForAdmin(id: number): Promise<AdminOpportunityDTO |
   return { ...dto, iconPendingUrl: rows[0].iconPendingUrl };
 }
 
+/**
+ * Re-embeds an opportunity and recomputes its related-orgs cache. Called
+ * after approve/edit (name/description/tags may have changed) as well as
+ * from the scrapers (vip.ts, engage-classify.ts). Deliberately swallows
+ * errors — a re-embed/related-orgs failure must never block an approval or
+ * edit from completing; see BUILD_NOTES.md and embeddings.ts.
+ */
+async function reembedAndRecompute(id: number): Promise<void> {
+  try {
+    if (await embedOpportunity(id)) {
+      await recomputeRelated(id);
+    }
+  } catch (err) {
+    console.error(`reembedAndRecompute(${id}) failed:`, (err as Error).message);
+  }
+}
+
 /** ADMIN-ONLY: approve a pending/rejected row, stamping reviewedBy/reviewedAt. */
 export async function approveOpportunity(id: number, reviewedBy: string): Promise<OpportunityDTO | null> {
   const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
@@ -351,6 +371,7 @@ export async function approveOpportunity(id: number, reviewedBy: string): Promis
       updatedAt: sql`now()`,
     })
     .where(eq(opportunities.id, id));
+  await reembedAndRecompute(id);
   return getByIdForAdmin(id);
 }
 
@@ -423,6 +444,10 @@ export async function updateOpportunity(
   });
 
   await refreshSearchBlob(id);
+  // name/description/tags may have just changed — re-embed and recompute
+  // related orgs regardless of whether `approve` was true (an edit to an
+  // already-approved row should still refresh its related-orgs cache).
+  await reembedAndRecompute(id);
   return getByIdForAdmin(id);
 }
 
@@ -836,4 +861,32 @@ export async function rejectLink(id: number, reviewedBy: string): Promise<LinkDT
     .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
     .where(eq(links.id, id));
   return toLinkDTO((await getLinkById(id))!);
+}
+
+// ---- Related organizations (embedding-based, cross-category) ----
+// Read-only accessor over the `related_opportunities` cache table (see
+// schema.ts / backend/src/lib/related-opportunities.ts). Never computed
+// live here — recomputeRelated() is the only writer, called on
+// create/edit/reclassify (vip.ts, engage-classify.ts, approveOpportunity()/
+// updateOpportunity() above).
+
+/**
+ * The only sanctioned public-read path for related orgs: joins the cache
+ * table to `opportunities` and only returns rows that are currently
+ * `approved` — reuses the same approved-only discipline as getPublic(),
+ * important because a cached related row can point at an opportunity that
+ * was approved when the cache was computed but has since been unpublished.
+ * Ordered by rank (1 = most related). Never exposes the raw `embedding`
+ * column — same OpportunityDTO shape as every other read path, minus that
+ * field (OpportunityDTO never included it to begin with).
+ */
+export async function getRelatedOpportunities(opportunityId: number): Promise<OpportunityDTO[]> {
+  const rows = await db
+    .select({ opportunity: opportunities, rank: relatedOpportunities.rank })
+    .from(relatedOpportunities)
+    .innerJoin(opportunities, eq(relatedOpportunities.relatedOpportunityId, opportunities.id))
+    .where(and(eq(relatedOpportunities.opportunityId, opportunityId), eq(opportunities.status, "approved" as const)))
+    .orderBy(asc(relatedOpportunities.rank));
+
+  return attachTags(rows.map((r) => r.opportunity));
 }

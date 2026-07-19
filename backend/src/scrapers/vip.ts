@@ -24,6 +24,8 @@ import { db, closePool } from "../db/client.js";
 import { opportunities } from "../db/schema.js";
 import { getMeta, setMajors, setMeta, setDetails } from "../db/json-columns.js";
 import { refreshSearchBlob } from "../db/data-access.js";
+import { embedOpportunity } from "../lib/embeddings.js";
+import { recomputeRelated } from "../lib/related-opportunities.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -336,6 +338,18 @@ async function upsertEntry(entry: ParsedVipEntry) {
     action = "inserted";
   }
   await refreshSearchBlob(id);
+
+  // Re-embed and recompute related orgs for this team. Wrapped so a failure
+  // here (or a missing OPENAI_API_KEY, in which case embedOpportunity()
+  // just returns false) never fails the scrape run — see BUILD_NOTES.md.
+  try {
+    if (await embedOpportunity(id)) {
+      await recomputeRelated(id);
+    }
+  } catch (err) {
+    console.error(`  embedding/related-orgs step failed for entry ${id}:`, (err as Error).message);
+  }
+
   return { action, id };
 }
 

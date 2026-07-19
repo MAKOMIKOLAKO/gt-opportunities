@@ -11,6 +11,7 @@
     "start": "tsx src/index.ts",
     "smoke": "tsx src/db/smoke-test.ts",
     "backfill:search": "tsx src/db/backfill-search-blob.ts",
+    "backfill:embeddings": "tsx src/db/backfill-embeddings.ts",
     "scrape:vip": "tsx src/scrapers/vip.ts",
     "scrape:engage": "tsx src/scrapers/engage-scrape.ts",
     "classify:engage": "tsx src/scrapers/engage-classify.ts"
