@@ -8,6 +8,7 @@ import {
   getApprovedReviewById,
   insertReview,
   insertReport,
+  submitIconPending,
 } from "../db/data-access.js";
 import type { OpportunityType, ReportCategory } from "../db/schema.js";
 import { REPORT_CATEGORIES } from "../db/schema.js";
@@ -43,6 +44,55 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
   }
   const reviews = await getApprovedReviews(id);
   res.json({ result: { ...result, reviews } });
+});
+
+// Basic content check before it reaches the admin pending-icon queue: must
+// look like a plausible https image URL and stay under a sane length. This
+// is deliberately NOT a fetch-and-verify (real content-type/size check) —
+// actually fetching an arbitrary user-supplied URL server-side has SSRF
+// implications that deserve a deliberate design pass; see
+// BUILD_NOTES_ICON_FEATURE.md.
+// TODO: server-side fetch-and-verify (content-type sniff, size cap, SSRF-safe
+// resolved-IP allowlisting + redirect handling) before the URL is trusted —
+// currently an admin visually reviewing the thumbnail is the safety net.
+const ICON_URL_MAX_LENGTH = 2048;
+const ICON_URL_PATTERN = /^https:\/\/[^\s]+\.(png|jpe?g|gif|webp|svg)(\?[^\s]*)?$/i;
+
+// Public icon submission for an EXISTING (public/approved) opportunity —
+// there's no id to attach an icon to until an org has been approved. Sets
+// iconPendingUrl only; never touches the live iconUrl. Returns 404 if the
+// opportunity isn't public, same "can't distinguish pending/rejected from
+// doesn't-exist" convention used elsewhere in this file.
+publicRouter.post("/opportunities/:id/icon", async (req, res) => {
+  const opportunityId = Number(req.params.id);
+  if (!Number.isInteger(opportunityId)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const publicOpportunities = await getPublic();
+  const opp = publicOpportunities.find((r) => r.id === opportunityId);
+  if (!opp) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  const url = typeof body.url === "string" ? body.url.trim() : "";
+  const details: string[] = [];
+  if (!url) {
+    details.push("url is required");
+  } else if (url.length > ICON_URL_MAX_LENGTH) {
+    details.push(`url must be ${ICON_URL_MAX_LENGTH} characters or fewer`);
+  } else if (!ICON_URL_PATTERN.test(url)) {
+    details.push("url must be an https:// link ending in .png, .jpg, .jpeg, .gif, .webp, or .svg");
+  }
+  if (details.length > 0) {
+    res.status(400).json({ error: "validation_error", details });
+    return;
+  }
+
+  await submitIconPending(opportunityId, url);
+  res.status(201).json({ result: { id: opportunityId, iconPendingUrl: url } });
 });
 
 publicRouter.get("/tags", async (_req, res) => {

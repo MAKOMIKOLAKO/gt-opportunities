@@ -69,6 +69,13 @@ export const opportunities = pgTable(
     source: text("source").$type<OpportunitySource>().notNull(),
     status: text("status").$type<OpportunityStatus>().notNull().default("pending"),
     submittedBy: text("submitted_by"),
+    // ---- Org profile icon (icon submission feature) ----
+    // `iconUrl` is the live, publicly-served icon (exposed to public DTOs).
+    // `iconPendingUrl` is a submitted-but-not-yet-approved replacement,
+    // admin-only — never exposed on the public read path. Both nullable,
+    // additive columns; see migrations/ for the generated ALTER TABLE.
+    iconUrl: text("icon_url"),
+    iconPendingUrl: text("icon_pending_url"),
     reviewedBy: text("reviewed_by"),
     reviewedAt: timestamp("reviewed_at", { mode: "string" }),
     lastVerified: timestamp("last_verified", { mode: "string" }),

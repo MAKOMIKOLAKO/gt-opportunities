@@ -12,6 +12,9 @@ import {
   rejectReview,
   getReportsForAdmin,
   resolveReport,
+  getPendingIcons,
+  approveIcon,
+  rejectIcon,
 } from "../db/data-access.js";
 import type { OpportunityStatus, OpportunityType, ReviewStatus, ReportStatus } from "../db/schema.js";
 
@@ -133,6 +136,36 @@ adminRouter.post("/admin/reports/:id/resolve", async (req, res) => {
   const id = Number(req.params.id);
   const resolvedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
   const result = await resolveReport(id, resolvedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+// ---- Org profile icon review queue (icon submission feature) ----
+// Same pending -> admin-review -> approved lifecycle as the opportunities
+// queue above, scoped to the iconUrl/iconPendingUrl pair.
+adminRouter.get("/admin/icons/pending", async (_req, res) => {
+  const results = await getPendingIcons();
+  res.json({ results, count: results.length });
+});
+
+adminRouter.post("/admin/opportunities/:id/icon/approve", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await approveIcon(id, reviewedBy);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ result });
+});
+
+adminRouter.post("/admin/opportunities/:id/icon/reject", async (req, res) => {
+  const id = Number(req.params.id);
+  const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
+  const result = await rejectIcon(id, reviewedBy);
   if (!result) {
     res.status(404).json({ error: "not_found" });
     return;

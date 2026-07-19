@@ -31,6 +31,7 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
   "source": "scraped",
   "status": "approved",
   "submittedBy": null,
+  "iconUrl": null,
   "reviewedBy": null,
   "reviewedAt": null,
   "lastVerified": "2026-07-01",
@@ -43,6 +44,14 @@ names/types). The `Opportunity` shape returned by every endpoint below is the
 `type` is one of `vip | lab | club`. `source` is one of
 `scraped | curated | user_submitted`. `status` is one of
 `approved | pending | rejected`.
+
+`iconUrl` (org profile icon feature) is the live, publicly-served icon URL,
+or `null` if none has been approved yet — frontend falls back to a
+colored-initials placeholder when it's null. There is also an admin-only
+`iconPendingUrl` field (a submitted-but-not-yet-approved replacement icon)
+that is **only** present on admin responses (`getByIdForAdmin`/the pending
+icons queue below) — it is never included in any public response, including
+`GET /api/opportunities` and `GET /api/opportunities/:id`.
 
 `details` is a free-form JSON object (jsonb-equivalent, like `meta`) for
 type-specific structured fields that don't apply across vip/lab/club rows —
@@ -219,6 +228,30 @@ Response `201`:
 ```
 Response `400`: `{ "error": "validation_error", "details": ["name is required"] }`
 
+### `POST /api/opportunities/:id/icon` (org profile icon feature)
+
+Public submission of a candidate icon/logo URL for an **existing, publicly
+visible (approved)** opportunity — there is no id to attach an icon to until
+an org has been approved, so this only makes sense from the org detail page,
+not the "submit an org" form. Sets `iconPendingUrl` only; never touches the
+live `iconUrl`. Accepts a URL, not a file upload — there's no object storage
+configured in this app.
+
+Request body:
+```json
+{ "url": "https://example.com/logo.png" }
+```
+Validation: `url` required, `https://` only, max 2048 chars, must end in
+`.png|.jpg|.jpeg|.gif|.webp|.svg` (optionally followed by a `?query`). This
+is a best-effort format check, not a fetch-and-verify of the actual image
+content/type — see `BUILD_NOTES.md` for why (SSRF considerations).
+
+Response `201`: `{ "result": { "id": 42, "iconPendingUrl": "https://example.com/logo.png" } }`
+Response `400`: `{ "error": "validation_error", "details": ["url must be an https:// link ending in .png, .jpg, .jpeg, .gif, .webp, or .svg"] }`
+Response `404`: `{ "error": "not_found" }` — same "public callers can't
+distinguish pending/rejected from doesn't-exist" convention as other public
+routes.
+
 ---
 
 ## Admin endpoints
@@ -288,6 +321,41 @@ Request body (all fields optional except none required):
 Response `200`: `{ "result": Opportunity }`
 Response `404`: `{ "error": "not_found" }`
 Response `400`: `{ "error": "validation_error", "details": ["..."] }`
+
+### `GET /api/admin/icons/pending` (org profile icon feature)
+
+List opportunities with a pending icon submission awaiting review
+(`iconPendingUrl IS NOT NULL`). Backed by `getPendingIcons()`.
+
+Response `200`:
+```json
+{
+  "results": [
+    { "id": 1, "name": "Test Robotics Club", "iconUrl": null, "iconPendingUrl": "https://example.com/logo.png" }
+  ],
+  "count": 1
+}
+```
+
+### `POST /api/admin/opportunities/:id/icon/approve`
+
+Promotes the pending icon to live: copies `iconPendingUrl` → `iconUrl`,
+clears `iconPendingUrl`, stamps `updatedAt`. Does **not** touch the
+opportunity's own `reviewedBy`/`reviewedAt` — those track the separate
+opportunity approve/reject lifecycle.
+
+Request body: `{}` (no body required)
+Response `200`: `{ "result": Opportunity }` (admin variant, includes `iconPendingUrl: null`)
+Response `404`: `{ "error": "not_found" }`
+
+### `POST /api/admin/opportunities/:id/icon/reject`
+
+Discards the pending icon submission (`iconPendingUrl = null`) without
+touching the live `iconUrl`.
+
+Request body: `{}` (no body required)
+Response `200`: `{ "result": Opportunity }`
+Response `404`: `{ "error": "not_found" }`
 
 ### `GET /api/admin/reviews?status=pending` (Addition 3)
 

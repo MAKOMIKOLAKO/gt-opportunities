@@ -43,6 +43,18 @@ function computeDiscipline(majors) {
   return "Multidisciplinary";
 }
 
+// Renders the org-icon element: an <img> against the type color background
+// when `iconUrl` is set (falls back to initials text if the image URL 404s
+// or fails to load — see the onerror handler), otherwise the existing
+// colored-initials placeholder.
+function renderOrgIcon(o, extraClass) {
+  const cls = extraClass ? `org-icon ${extraClass}` : "org-icon";
+  if (o.iconUrl) {
+    return `<div class="${cls}" style="background:${o.iconColor}"><img src="${escapeAttr(o.iconUrl)}" alt="" loading="lazy" data-fallback="${escapeAttr(o.initials)}" onerror="this.parentElement.textContent=this.dataset.fallback" /></div>`;
+  }
+  return `<div class="${cls}" style="background:${o.iconColor}">${o.initials}</div>`;
+}
+
 function initials(name) {
   const words = (name || "").replace(/^VIP:\s*/i, "").trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "??";
@@ -91,6 +103,7 @@ const state = {
   lastSubmittedName: "",
   reviewFormOpportunityId: null,
   flagReviewId: null,
+  iconSubmit: { opportunityId: null, message: "", kind: "" },
 };
 
 let searchDebounce = null;
@@ -301,7 +314,7 @@ function renderCardsInto(orgs) {
           (o) => `
         <button class="org-card" data-action="open-detail" data-id="${o.id}">
           <div class="org-card-top">
-            <div class="org-icon" style="background:${o.iconColor}">${o.initials}</div>
+            ${renderOrgIcon(o)}
           </div>
           <div>
             <div class="org-card-name">${escapeHtml(o.name)}</div>
@@ -353,7 +366,7 @@ async function loadDetail(id) {
     container.innerHTML = `
       <div class="detail-card">
         <div class="detail-header">
-          <div class="org-icon lg" style="background:${opp.iconColor}">${opp.initials}</div>
+          ${renderOrgIcon(opp, "lg")}
           <div class="detail-header-text">
             <div class="detail-title-row">
               <h1>${escapeHtml(opp.name)}</h1>
@@ -385,11 +398,71 @@ async function loadDetail(id) {
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
 
+        ${renderIconSubmitBlock(opp)}
+
         ${renderReviewsBlock(opp)}
       </div>
     `;
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Rendering — org icon submission (icon submission feature)
+//
+// Scoped to the detail page only, not the "submit an org" form — a brand
+// new org submission has no id until an admin approves it, so there's
+// nothing for /api/opportunities/:id/icon to attach to yet. (See
+// BUILD_NOTES.md for this as a documented assumption, not an oversight.)
+// ---------------------------------------------------------------------
+
+function renderIconSubmitBlock(opp) {
+  const status = state.iconSubmit;
+  const statusMarkup =
+    status.opportunityId === opp.id && status.message
+      ? `<div class="icon-submit-status ${status.kind}">${escapeHtml(status.message)}</div>`
+      : "";
+  return `
+    <div class="icon-submit-block">
+      <div class="detail-tags-label">Submit an icon</div>
+      <div class="icon-submit-block-sub">Suggest a logo/icon image URL for this org. A moderator reviews it before it goes live.</div>
+      <form id="iconForm" class="icon-submit-form" data-id="${opp.id}">
+        <input type="url" name="iconUrl" required maxlength="2048"
+          placeholder="https://example.com/logo.png" />
+        <button type="submit" class="submit-btn">Submit icon</button>
+      </form>
+      ${statusMarkup}
+    </div>
+  `;
+}
+
+async function submitIcon(opportunityId, url) {
+  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/icon`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+async function handleIconSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = Number(form.dataset.id);
+  const btn = form.querySelector("button[type=submit]");
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  setState({ iconSubmit: { opportunityId, message: "Submitting…", kind: "pending" } });
+  try {
+    await submitIcon(opportunityId, form.iconUrl.value.trim());
+    setState({
+      iconSubmit: { opportunityId, message: "Thanks — submitted for moderator review.", kind: "success" },
+    });
+  } catch (err) {
+    setState({ iconSubmit: { opportunityId, message: err.message, kind: "error" } });
   }
 }
 
@@ -745,6 +818,8 @@ function wireEvents() {
       handleReviewSubmit(e);
     } else if (e.target.id === "flagForm") {
       handleFlagSubmit(e);
+    } else if (e.target.id === "iconForm") {
+      handleIconSubmit(e);
     }
   });
 }

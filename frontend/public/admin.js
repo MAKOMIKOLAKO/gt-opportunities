@@ -4,14 +4,20 @@
 // build out opportunity-approval UI (that queue already has a working API
 // at GET/POST /api/admin/opportunities/* but no frontend; out of scope
 // here).
+//
+// Pending Icons tab (icon submission feature) added later: reviews org
+// profile icon submissions (GET/POST /api/admin/icons/pending +
+// /api/admin/opportunities/:id/icon/approve|reject), following the same
+// queue-item visual/interaction pattern as the reviews/reports tabs above.
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports
+  tab: "reviews", // reviews | reports | icons
   reviews: [],
   reports: [],
+  icons: [],
   guidance: "",
   loading: false,
   error: "",
@@ -63,14 +69,16 @@ async function login(username, password) {
 async function loadQueues() {
   setState({ loading: true, error: "" });
   try {
-    const [reviewsRes, reportsRes] = await Promise.all([
+    const [reviewsRes, reportsRes, iconsRes] = await Promise.all([
       apiFetch("/admin/reviews?status=pending"),
       apiFetch("/admin/reports?status=open"),
+      apiFetch("/admin/icons/pending"),
     ]);
     setState({
       reviews: reviewsRes.results,
       guidance: reviewsRes.guidance || "",
       reports: reportsRes.results,
+      icons: iconsRes.results,
       loading: false,
     });
   } catch (err) {
@@ -99,6 +107,24 @@ async function rejectReview(id) {
 async function resolveReport(id) {
   try {
     await apiFetch(`/admin/reports/${id}/resolve`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function approveIcon(id) {
+  try {
+    await apiFetch(`/admin/opportunities/${id}/icon/approve`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function rejectIcon(id) {
+  try {
+    await apiFetch(`/admin/opportunities/${id}/icon/reject`, { method: "POST" });
     loadQueues();
   } catch (err) {
     setState({ error: err.message });
@@ -174,6 +200,38 @@ function renderReportsTab() {
     .join("");
 }
 
+function renderIconsTab() {
+  if (state.icons.length === 0) {
+    return `<div class="review-empty">No pending icon submissions.</div>`;
+  }
+  return state.icons
+    .map(
+      (o) => `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-head">
+        <div class="admin-queue-item-title">${escapeHtml(o.name)} <span class="admin-queue-item-meta">(opportunity #${o.id})</span></div>
+      </div>
+      <div class="icon-compare-row">
+        <div class="icon-compare-col">
+          <div class="icon-compare-label">Current</div>
+          <div class="icon-compare-thumb">${o.iconUrl ? `<img src="${escapeHtml(o.iconUrl)}" alt="" onerror="this.parentElement.textContent='broken'" />` : "no icon"}</div>
+        </div>
+        <div class="icon-compare-arrow">&rarr;</div>
+        <div class="icon-compare-col">
+          <div class="icon-compare-label">Submitted</div>
+          <div class="icon-compare-thumb">${o.iconPendingUrl ? `<img src="${escapeHtml(o.iconPendingUrl)}" alt="" onerror="this.parentElement.textContent='broken'" />` : "no icon"}</div>
+        </div>
+      </div>
+      <div class="admin-queue-actions">
+        <button class="admin-btn approve" data-action="approve-icon" data-id="${o.id}">Approve</button>
+        <button class="admin-btn reject" data-action="reject-icon" data-id="${o.id}">Reject</button>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+}
+
 function renderDashboard() {
   return `
     <main class="view-admin">
@@ -181,14 +239,25 @@ function renderDashboard() {
       <div class="admin-tabs">
         <button class="${state.tab === "reviews" ? "active" : ""}" data-action="tab-reviews">Reviews (${state.reviews.length})</button>
         <button class="${state.tab === "reports" ? "active" : ""}" data-action="tab-reports">Reports / Disputes (${state.reports.length})</button>
+        <button class="${state.tab === "icons" ? "active" : ""}" data-action="tab-icons">Pending Icons (${state.icons.length})</button>
       </div>
       ${
         state.tab === "reviews"
           ? `<div class="admin-guidance"><strong>Moderation guidance for reviews:</strong> ${escapeHtml(state.guidance)}</div>`
-          : `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
+          : state.tab === "reports"
+          ? `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
+          : `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
       }
       ${state.error ? `<div class="form-error" style="margin-bottom:14px;">${escapeHtml(state.error)}</div>` : ""}
-      ${state.loading ? `<div class="state-msg">Loading&hellip;</div>` : state.tab === "reviews" ? renderReviewsTab() : renderReportsTab()}
+      ${
+        state.loading
+          ? `<div class="state-msg">Loading&hellip;</div>`
+          : state.tab === "reviews"
+          ? renderReviewsTab()
+          : state.tab === "reports"
+          ? renderReportsTab()
+          : renderIconsTab()
+      }
     </main>
   `;
 }
@@ -228,6 +297,9 @@ function wireEvents() {
       case "tab-reports":
         setState({ tab: "reports" });
         break;
+      case "tab-icons":
+        setState({ tab: "icons" });
+        break;
       case "approve-review":
         approveReview(node.dataset.id);
         break;
@@ -236,6 +308,12 @@ function wireEvents() {
         break;
       case "resolve-report":
         resolveReport(Number(node.dataset.id));
+        break;
+      case "approve-icon":
+        approveIcon(Number(node.dataset.id));
+        break;
+      case "reject-icon":
+        rejectIcon(Number(node.dataset.id));
         break;
     }
   });
