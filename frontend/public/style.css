@@ -886,3 +886,52 @@ main {
   .detail-card { padding: 20px; }
   .detail-footer { flex-direction: column; align-items: stretch; }
 }
+
+/* ---------------------------------------------------------------------
+   Server-rendered SEO pages (backend/src/routes/seo.ts) — /opportunities/:slug
+   and /categories/:type. Deliberately plain/lightweight styling reusing the
+   navy/gold tokens above; these pages exist to be readable to crawlers and
+   no-JS visitors, not to replicate the full SPA's interaction design.
+--------------------------------------------------------------------- */
+.ssr-header {
+  background: var(--navy);
+  padding: 14px 24px;
+}
+.ssr-header nav { display: flex; align-items: center; gap: 20px; max-width: 960px; margin: 0 auto; flex-wrap: wrap; }
+.ssr-header a { color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; }
+.ssr-header a.ssr-brand { font-size: 16px; font-weight: 800; color: var(--gold); }
+.ssr-header a:hover { text-decoration: underline; }
+
+.ssr-main { max-width: 800px; margin: 0 auto; padding: 32px 24px 64px; }
+.ssr-breadcrumbs { font-size: 13px; color: var(--gray-matter); margin-bottom: 18px; }
+.ssr-breadcrumbs a { color: var(--navy); text-decoration: none; }
+.ssr-breadcrumbs a:hover { text-decoration: underline; }
+
+.ssr-main h1 { font-size: 28px; font-weight: 800; color: var(--navy); letter-spacing: -0.4px; margin: 0 0 8px; }
+.ssr-main h2 { font-size: 18px; font-weight: 700; color: var(--navy); margin: 28px 0 8px; }
+.ssr-main p { line-height: 1.6; color: var(--ink); }
+.ssr-intro { color: var(--gray-matter); font-size: 15px; margin-bottom: 24px; }
+
+.ssr-detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.ssr-icon { border-radius: 10px; object-fit: cover; }
+.ssr-type-badge { display: inline-block; background: var(--diploma); color: var(--navy); font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; margin: 4px 0 0; }
+
+.ssr-apply-link { display: inline-block; background: var(--gold); color: var(--navy); font-weight: 700; padding: 10px 18px; border-radius: 8px; text-decoration: none; margin-top: 6px; }
+.ssr-apply-link:hover { opacity: 0.9; }
+.ssr-app-link a { color: var(--navy); font-weight: 600; }
+
+.ssr-tags { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.ssr-tags li { background: var(--diploma); color: var(--navy); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
+
+.ssr-related { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.ssr-related a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.ssr-related a:hover { text-decoration: underline; }
+
+.ssr-card-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.ssr-card { border: 1px solid var(--pi-mile); border-radius: 10px; background: #fff; }
+.ssr-card a { display: block; padding: 16px; text-decoration: none; color: inherit; }
+.ssr-card h3 { font-size: 15px; font-weight: 700; color: var(--navy); margin: 0 0 6px; }
+.ssr-card p { font-size: 13px; color: var(--gray-matter); margin: 0; line-height: 1.5; }
+.ssr-card:hover { border-color: var(--gold); }
+
+.ssr-footer { max-width: 800px; margin: 0 auto; padding: 24px; color: var(--gray-matter); font-size: 12px; text-align: center; }

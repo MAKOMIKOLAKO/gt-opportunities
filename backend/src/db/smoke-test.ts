@@ -13,6 +13,7 @@ async function main() {
 
   await db.insert(opportunities).values([
     {
+      slug: "approved-vip-team",
       type: "vip",
       name: "Approved VIP Team",
       description: "An approved test row.",
@@ -23,6 +24,7 @@ async function main() {
       status: "approved",
     },
     {
+      slug: "pending-lab-row",
       type: "lab",
       name: "Pending Lab Row",
       description: "A pending test row.",
@@ -34,6 +36,7 @@ async function main() {
       submittedBy: "student@gatech.edu",
     },
     {
+      slug: "rejected-club-row",
       type: "club",
       name: "Rejected Club Row",
       description: "A rejected test row.",

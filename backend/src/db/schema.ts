@@ -17,7 +17,7 @@
 //     `tsvector` column (Postgres's real full-text index type, replacing
 //     SQLite's FTS5 virtual table + triggers) with a GIN index, kept in
 //     sync by `refreshSearchBlob()` in data-access.ts on every write.
-import { pgTable, text, integer, real, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, serial, timestamp, primaryKey, index, uniqueIndex, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Postgres `tsvector` type — drizzle-orm has no built-in column helper for
@@ -58,6 +58,18 @@ export const opportunities = pgTable(
   "opportunities",
   {
     id: serial("id").primaryKey(),
+    // SEO-facing slug (e.g. "vip-autonomous-vehicles-lab"), used for the
+    // crawlable /opportunities/:slug URL — see backend/src/routes/seo.ts and
+    // backend/src/lib/slug.ts. Uniqueness is enforced by a Postgres unique
+    // index added (after backfill) in
+    // migrations/0006_backfill_opportunity_slug.sql rather than `.unique()`
+    // here, since this column is being added to a table that already has
+    // ~700 rows all defaulting to '' — the index can only be created once
+    // the backfill step has given every row a distinct value.
+    slug: text("slug").notNull().default(""),
+    // Prior slug, retained for one rename so seo.ts can 301 the old URL
+    // instead of 404ing it. Null until a row's slug is ever regenerated.
+    previousSlug: text("previous_slug"),
     type: text("type").$type<OpportunityType>().notNull(),
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
@@ -105,6 +117,13 @@ export const opportunities = pgTable(
   },
   (table) => ({
     searchVectorIdx: index("opportunities_search_vector_idx").using("gin", table.searchVector),
+    // Matches the UNIQUE CONSTRAINT added by hand in
+    // migrations/0006_backfill_opportunity_slug.sql (added post-backfill, so
+    // it couldn't be expressed as `.unique()` on the column itself — see
+    // that migration's comment). Declared here purely so `drizzle-kit
+    // generate` sees the schema and the live DB already agree and doesn't
+    // propose a redundant index on the next diff.
+    slugUniqueIdx: uniqueIndex("opportunities_slug_unique").on(table.slug),
   })
 );
 

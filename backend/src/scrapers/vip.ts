@@ -26,6 +26,7 @@ import { getMeta, setMajors, setMeta, setDetails } from "../db/json-columns.js";
 import { refreshSearchBlob } from "../db/data-access.js";
 import { embedOpportunity } from "../lib/embeddings.js";
 import { recomputeRelated } from "../lib/related-opportunities.js";
+import { generateUniqueSlug } from "../lib/slug.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -329,11 +330,16 @@ async function upsertEntry(entry: ParsedVipEntry) {
   let id: number;
   let action: "inserted" | "updated";
   if (existing) {
+    // Slug intentionally untouched on re-scrape/update — VIP entry names
+    // rarely change, and regenerating it on every scrape run would churn
+    // (or 404) an already-indexed URL for no reason. Renames go through
+    // updateOpportunity()'s explicit slug-regeneration path instead.
     await db.update(opportunities).set(values).where(eq(opportunities.id, existing.id));
     id = existing.id;
     action = "updated";
   } else {
-    const [row] = await db.insert(opportunities).values(values).returning({ id: opportunities.id });
+    const slug = await generateUniqueSlug(values.name);
+    const [row] = await db.insert(opportunities).values({ ...values, slug }).returning({ id: opportunities.id });
     id = row.id;
     action = "inserted";
   }
