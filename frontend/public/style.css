@@ -313,6 +313,40 @@ main {
   flex-shrink: 0;
 }
 .org-icon.lg { width: 56px; height: 56px; border-radius: 12px; font-size: 19px; }
+.org-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+
+/* ---------- Org icon submission (icon submission feature) ---------- */
+
+.icon-submit-block {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1.5px solid var(--pi-mile);
+}
+.icon-submit-block .detail-tags-label { margin-bottom: 6px; }
+.icon-submit-block-sub { font-size: 12px; color: var(--gray-matter); margin-bottom: 10px; }
+.icon-submit-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.icon-submit-form input[type="url"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--pi-mile);
+  font-size: 13px;
+}
+.icon-submit-form input[type="url"]:focus { border-color: var(--gold); }
+.icon-submit-status { font-size: 12px; margin-top: 8px; }
+.icon-submit-status.pending { color: var(--gray-matter); }
+.icon-submit-status.success { color: #1f7a3d; }
+.icon-submit-status.error { color: #9c2b23; }
+.icon-pending-note {
+  font-size: 12px;
+  color: var(--gray-matter);
+  background: var(--diploma);
+  border: 1px solid var(--pi-mile);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+}
 
 .org-card-name { font-size: 16px; font-weight: 700; color: var(--navy); line-height: 1.3; margin-bottom: 3px; }
 .org-card-sub { font-size: 12.5px; color: var(--gray-matter); font-weight: 500; }
@@ -477,6 +511,25 @@ main {
 }
 .detail-contact { font-size: 13px; color: var(--gray-matter); }
 
+/* ---------- Additional links (approved links queue) ---------- */
+
+.links-block { margin: 20px 0; padding-top: 8px; border-top: 1px solid #EFF1EE; }
+.links-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.links-list-item { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.links-list-item a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.links-list-item a:hover { text-decoration: underline; }
+.link-type-badge {
+  background: var(--diploma);
+  color: var(--gray-matter);
+  border: 1px solid var(--pi-mile);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 /* ---------- Submit view ---------- */
 
 .submit-heading h1 { font-size: 26px; font-weight: 800; color: var(--navy); margin: 0 0 6px; letter-spacing: -0.4px; }
@@ -568,6 +621,51 @@ main {
 }
 .submit-btn:disabled { opacity: 0.6; cursor: default; }
 
+.submit-links-block { display: flex; flex-direction: column; gap: 10px; }
+.submit-links-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.submit-links-head label { margin-bottom: 0; }
+.submit-links-hint { font-weight: 400; color: var(--gray-matter); text-transform: none; letter-spacing: normal; }
+.add-link-row-btn {
+  background: none;
+  border: 1.5px solid var(--navy);
+  color: var(--navy);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.link-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.5fr 0.9fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.link-row input, .link-row select {
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1.5px solid var(--pi-mile);
+  font-size: 13px;
+  background: #fff;
+  color: var(--ink);
+}
+.remove-link-row-btn {
+  background: none;
+  border: 1.5px solid var(--pi-mile);
+  color: var(--gray-matter);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .link-row { grid-template-columns: 1fr; }
+}
+
 .form-error {
   background: #FDEBEA;
   border: 1px solid #F3B9B5;
@@ -576,6 +674,43 @@ main {
   padding: 10px 14px;
   font-size: 12.5px;
 }
+
+/* ---------- Related organizations ---------- */
+/* Cross-category, embedding-based matches (see app.js / API-CONTRACT.md) —
+   deliberately reuses the .org-card look from the directory grid so a
+   related org reads as "the same kind of thing you were just looking at,"
+   just in a horizontally-scrollable row instead of a grid cell. Hidden
+   entirely by app.js when relatedOrgs is empty (no empty-state UI here). */
+
+.related-orgs-block {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #EFF1EE;
+}
+.related-orgs-block h2 {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--navy);
+  margin: 0 0 14px;
+}
+.related-orgs-scroller {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x proximity;
+}
+.related-org-card {
+  flex: 0 0 260px;
+  scroll-snap-align: start;
+}
+.related-orgs-scroller::-webkit-scrollbar { height: 8px; }
+.related-orgs-scroller::-webkit-scrollbar-track { background: transparent; }
+.related-orgs-scroller::-webkit-scrollbar-thumb {
+  background: var(--pi-mile);
+  border-radius: 8px;
+}
+.related-orgs-scroller::-webkit-scrollbar-thumb:hover { background: var(--gold); }
 
 /* ---------- Reviews (Addition 3) ---------- */
 
@@ -639,7 +774,41 @@ main {
   padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 
-/* ---------- Admin (Addition 3: reviews + reports queues) ---------- */
+/* ---------- Suggest an edit ---------- */
+
+.suggest-edit-block {
+  margin: 20px 0;
+  padding-top: 16px;
+  border-top: 1px solid #EFF1EE;
+}
+.suggest-edit-toggle {
+  background: none;
+  border: none;
+  color: var(--gray-matter);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.suggest-edit-toggle:hover { color: var(--navy); }
+.suggest-edit-message { margin-top: 8px; font-size: 12.5px; color: #1f7a3d; }
+.suggest-edit-block.open {
+  background: var(--diploma);
+  border: 1px solid var(--pi-mile);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.suggest-edit-title { font-size: 13px; font-weight: 800; color: var(--navy); margin-bottom: 12px; }
+.suggest-edit-row { margin-bottom: 12px; }
+.suggest-edit-block label { display: block; font-size: 12px; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.suggest-edit-block select,
+.suggest-edit-block textarea {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
+  font-size: 13.5px; background: #fff; color: var(--ink); resize: vertical; margin-bottom: 4px;
+}
+.suggest-edit-block #suggestEditError { margin: 8px 0; }
+
+/* ---------- Admin (Addition 3: reviews + reports queues; suggested edits) ---------- */
 
 .view-admin { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
 .admin-login-form { max-width: 360px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
@@ -670,6 +839,28 @@ main {
   padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .admin-tabs button.active { border-color: var(--navy); color: var(--navy); background: var(--diploma); }
+
+/* ---------- Admin: pending icons queue (icon submission feature) ---------- */
+
+.icon-compare-row { display: flex; gap: 22px; align-items: center; margin: 10px 0 4px; }
+.icon-compare-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.icon-compare-label { font-size: 11px; font-weight: 700; color: var(--gray-matter); text-transform: uppercase; letter-spacing: 0.03em; }
+.icon-compare-thumb {
+  width: 72px; height: 72px; border-radius: 12px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--diploma); border: 1.5px solid var(--pi-mile);
+  font-size: 11px; color: var(--gray-matter); text-align: center;
+}
+.icon-compare-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.icon-compare-arrow { font-size: 20px; color: var(--pi-mile); }
+
+.suggest-edit-diff { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.suggest-edit-diff-old { font-size: 13px; color: #9c2b23; text-decoration: line-through; word-break: break-word; }
+.suggest-edit-diff-new { font-size: 13.5px; color: #1f7a3d; font-weight: 600; word-break: break-word; }
+.suggest-edit-field-badge {
+  display: inline-block; background: var(--navy); color: #fff; font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 8px; border-radius: 5px; margin-right: 8px;
+}
 
 /* ---------- Loading / error ---------- */
 

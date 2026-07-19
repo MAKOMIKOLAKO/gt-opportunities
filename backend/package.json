@@ -11,20 +11,24 @@
     "start": "tsx src/index.ts",
     "smoke": "tsx src/db/smoke-test.ts",
     "backfill:search": "tsx src/db/backfill-search-blob.ts",
+    "backfill:embeddings": "tsx src/db/backfill-embeddings.ts",
     "scrape:vip": "tsx src/scrapers/vip.ts",
     "scrape:engage": "tsx src/scrapers/engage-scrape.ts",
     "classify:engage": "tsx src/scrapers/engage-classify.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.38.4",
     "express": "^4.21.2",
     "express-async-errors": "^3.1.1",
+    "multer": "^2.2.0",
     "pg": "^8.13.1",
     "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.10.5",
     "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.30.2",

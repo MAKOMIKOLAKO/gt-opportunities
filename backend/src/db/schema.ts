@@ -17,7 +17,7 @@
 //     `tsvector` column (Postgres's real full-text index type, replacing
 //     SQLite's FTS5 virtual table + triggers) with a GIN index, kept in
 //     sync by `refreshSearchBlob()` in data-access.ts on every write.
-import { pgTable, text, integer, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Postgres `tsvector` type — drizzle-orm has no built-in column helper for
@@ -28,6 +28,20 @@ import { sql } from "drizzle-orm";
 const tsvector = customType<{ data: string }>({
   dataType() {
     return "tsvector";
+  },
+});
+
+// pgvector's `vector(n)` type — same customType escape hatch as `tsvector`
+// above (drizzle-orm has no built-in pgvector helper either). Dimension is
+// fixed at 1536 to match OpenAI's `text-embedding-3-small` output (see
+// backend/src/lib/embeddings.ts). Only ever written through a raw pgvector
+// literal string (`[0.1,0.2,...]`, see embedOpportunity()) and read through
+// the `<=>` cosine-distance operator in raw `sql` (see
+// backend/src/lib/related-opportunities.ts) — never touched as a plain JS
+// array by drizzle's query builder.
+const vector1536 = customType<{ data: string }>({
+  dataType() {
+    return "vector(1536)";
   },
 });
 
@@ -66,9 +80,23 @@ export const opportunities = pgTable(
     // (see refreshSearchBlob). Nullable because it's populated by app code,
     // not a generated column.
     searchVector: tsvector("search_vector"),
+    // Semantic embedding of name + description + tag labels, used for
+    // cross-category "related organizations" matching (see
+    // backend/src/lib/embeddings.ts / related-opportunities.ts). Nullable:
+    // populated by app code (embedOpportunity()) whenever OPENAI_API_KEY is
+    // set, NOT a generated column, and legitimately null until a live key
+    // is configured or the one-off backfill script is run.
+    embedding: vector1536("embedding"),
     source: text("source").$type<OpportunitySource>().notNull(),
     status: text("status").$type<OpportunityStatus>().notNull().default("pending"),
     submittedBy: text("submitted_by"),
+    // ---- Org profile icon (icon submission feature) ----
+    // `iconUrl` is the live, publicly-served icon (exposed to public DTOs).
+    // `iconPendingUrl` is a submitted-but-not-yet-approved replacement,
+    // admin-only — never exposed on the public read path. Both nullable,
+    // additive columns; see migrations/ for the generated ALTER TABLE.
+    iconUrl: text("icon_url"),
+    iconPendingUrl: text("icon_pending_url"),
     reviewedBy: text("reviewed_by"),
     reviewedAt: timestamp("reviewed_at", { mode: "string" }),
     lastVerified: timestamp("last_verified", { mode: "string" }),
@@ -124,6 +152,38 @@ export const reviews = pgTable("reviews", {
   reviewedAt: timestamp("reviewed_at", { mode: "string" }),
 });
 
+// ---- Suggested edits (Addition: suggest edits on existing listings) ----
+// Public, anonymous-friendly "propose a correction" flow for a single field
+// on an existing opportunity, reviewed by an admin before it touches the
+// live row. Deliberately field-scoped (one row per proposed change to one
+// field) rather than a full-row diff, matching the narrow public surface
+// (`name | description | link | majors`) the route layer allowlists —
+// see backend/src/routes/public.ts.
+export const SUGGESTED_EDIT_STATUSES = ["pending", "approved", "rejected"] as const;
+export type SuggestedEditStatus = (typeof SUGGESTED_EDIT_STATUSES)[number];
+
+export const suggestedEdits = pgTable("suggested_edits", {
+  id: serial("id").primaryKey(),
+  opportunityId: integer("opportunity_id")
+    .notNull()
+    .references(() => opportunities.id, { onDelete: "cascade" }),
+  // Which opportunities.* column is being proposed for change. Free-text
+  // column here, but the route layer enforces a fixed allowlist server-side
+  // (name|description|link|majors) — never trust a client-supplied field.
+  field: text("field").notNull(),
+  // Snapshot of the field's value at submission time, captured server-side
+  // (not client-supplied) so admins can see the delta even if the live row
+  // changes again before this suggestion is reviewed. Nullable because
+  // `link` itself is nullable on the live row.
+  oldValue: text("old_value"),
+  newValue: text("new_value").notNull(),
+  submittedBy: text("submitted_by"),
+  status: text("status").$type<SuggestedEditStatus>().notNull().default("pending"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+});
+
 // ---- Reports (Addition 3) ----
 // NOTE: a `reports` table is also being prototyped, independently and not
 // yet merged, on `worktree-reports-and-vip-search`. This copy was created
@@ -148,3 +208,66 @@ export const reports = pgTable("reports", {
   resolvedBy: text("resolved_by"),
   resolvedAt: timestamp("resolved_at", { mode: "string" }),
 });
+
+// ---- Links (Additional org links beyond "how to apply") ----
+// `opportunities.link` remains the single primary "how to apply" link. This
+// table holds ADDITIONAL links per opportunity (apply-adjacent, homepage,
+// social, other), submitted either standalone (public link-submission route)
+// or alongside a new opportunity submission. `type` is a plain text column
+// with app-level enum validation (not a Postgres native enum type),
+// deliberately extensible later — matches how the rest of this schema
+// handles small closed vocabularies (see OPPORTUNITY_TYPES). Follows the
+// same pending -> admin-review -> approved lifecycle as reviews/reports;
+// LINK_STATUSES intentionally mirrors REVIEW_STATUSES's shape rather than
+// importing it, since links are their own domain.
+export const LINK_TYPES = ["apply", "homepage", "social", "other"] as const;
+export type LinkType = (typeof LINK_TYPES)[number];
+
+export const LINK_STATUSES = ["pending", "approved", "rejected"] as const;
+export type LinkStatus = (typeof LINK_STATUSES)[number];
+
+export const links = pgTable("links", {
+  id: serial("id").primaryKey(),
+  opportunityId: integer("opportunity_id")
+    .notNull()
+    .references(() => opportunities.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  type: text("type").$type<LinkType>().notNull(),
+  status: text("status").$type<LinkStatus>().notNull().default("pending"),
+  submittedBy: text("submitted_by"),
+  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  reviewedBy: text("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+});
+
+// ---- Related organizations (embedding-based, cross-category) ----
+// Precomputed cache of "related organizations" per opportunity, keyed on
+// cosine similarity between `opportunities.embedding` vectors, with a small
+// tag-overlap boost (see backend/src/lib/related-opportunities.ts). Deliberately
+// NEVER computed live per page view — recomputeRelated() replaces a given
+// opportunity's rows here, and callers just read the cache back
+// (getRelatedOpportunities() in data-access.ts). No same-`type` bonus is
+// ever applied here or in the scoring logic — cross-category matches (e.g.
+// a VIP robotics team <-> an Engage robotics club) are a hard requirement.
+export const relatedOpportunities = pgTable(
+  "related_opportunities",
+  {
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    relatedOpportunityId: integer("related_opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    // Blended score: (1 - cosine_distance) + tag-overlap boost. Not a raw
+    // cosine similarity alone — see recomputeRelated().
+    score: real("score").notNull(),
+    // 1-based position of `relatedOpportunityId` within `opportunityId`'s
+    // related list, most-similar first. Drives ORDER BY on read.
+    rank: integer("rank").notNull(),
+    computedAt: timestamp("computed_at", { mode: "string" }).notNull().default(sql`now()`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.opportunityId, table.relatedOpportunityId] }),
+  })
+);
