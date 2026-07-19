@@ -17,6 +17,7 @@ import express from "express";
 import { publicRouter } from "./routes/public.js";
 import { submitRouter } from "./routes/submit.js";
 import { adminRouter } from "./routes/admin.js";
+import { seoRouter } from "./routes/seo.js";
 
 export const app = express();
 
@@ -25,6 +26,13 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+// Server-rendered, crawlable pages (/opportunities/:slug, /categories/:type,
+// /robots.txt, /sitemap.xml). Mounted at root, NOT under /api, so the paths
+// are the same real URLs a search engine (or a person) would visit — see
+// routes/seo.ts. vercel.json and frontend/server.js both route these exact
+// paths to this same Express app in every hosting configuration.
+app.use("/", seoRouter);
 
 app.use("/api", publicRouter);
 app.use("/api", submitRouter);

@@ -36,6 +36,20 @@
       "when": 1784469699123,
       "tag": "0004_spooky_polaris",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784470987134,
+      "tag": "0005_add_opportunity_slug",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784471006579,
+      "tag": "0006_backfill_opportunity_slug",
+      "breakpoints": true
     }
   ]
 }

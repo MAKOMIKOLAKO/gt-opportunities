@@ -31,9 +31,11 @@ import {
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 import { embedOpportunity } from "../lib/embeddings.js";
 import { recomputeRelated } from "../lib/related-opportunities.js";
+import { generateUniqueSlug } from "../lib/slug.js";
 
 export interface OpportunityDTO {
   id: number;
+  slug: string;
   type: OpportunityType;
   name: string;
   description: string;
@@ -85,6 +87,7 @@ async function attachTags(rows: (typeof opportunities.$inferSelect)[]): Promise<
 
   return rows.map((r) => ({
     id: r.id,
+    slug: r.slug,
     type: r.type,
     name: r.name,
     description: r.description,
@@ -212,6 +215,40 @@ export async function getPublic(filters: PublicFilters = {}): Promise<Opportunit
   return attachTags(sortByRelevanceThenTitle(rows, ranks));
 }
 
+export type PublicBySlugResult =
+  | { kind: "found"; opportunity: OpportunityDTO }
+  | { kind: "redirect"; newSlug: string }
+  | { kind: "not_found" };
+
+/**
+ * The sanctioned public-read path for the SSR /opportunities/:slug route
+ * (see backend/src/routes/seo.ts) — status = 'approved' is hardcoded, same
+ * discipline as getPublic(). Falls back to matching `previousSlug` (set by
+ * updateOpportunity()/approveSuggestedEdit() on rename) so a renamed
+ * opportunity's old URL can 301 to its new one instead of 404ing a link
+ * Google or a bookmark still has.
+ */
+export async function getPublicBySlug(slug: string): Promise<PublicBySlugResult> {
+  const rows = await db
+    .select()
+    .from(opportunities)
+    .where(and(eq(opportunities.slug, slug), eq(opportunities.status, "approved" as const)));
+  if (rows.length > 0) {
+    const [opportunity] = await attachTags(rows);
+    return { kind: "found", opportunity };
+  }
+
+  const prevRows = await db
+    .select({ slug: opportunities.slug })
+    .from(opportunities)
+    .where(and(eq(opportunities.previousSlug, slug), eq(opportunities.status, "approved" as const)));
+  if (prevRows.length > 0) {
+    return { kind: "redirect", newSlug: prevRows[0].slug };
+  }
+
+  return { kind: "not_found" };
+}
+
 export interface AdminFilters {
   status?: OpportunityStatus;
   type?: OpportunityType;
@@ -309,9 +346,11 @@ export interface SubmissionInput {
 
 /** Public submission path: always source='user_submitted', status='pending'. */
 export async function insertSubmission(input: SubmissionInput): Promise<number> {
+  const slug = await generateUniqueSlug(input.name);
   const [row] = await db
     .insert(opportunities)
     .values({
+      slug,
       type: input.type,
       name: input.name,
       description: input.description,
@@ -421,7 +460,17 @@ export async function updateOpportunity(
   if (existing.length === 0) return null;
 
   const patch: Record<string, unknown> = { updatedAt: sql`now()` };
-  if (fields.name !== undefined) patch.name = fields.name;
+  // Renaming a live opportunity would silently break its indexed
+  // /opportunities/:slug URL, so regenerate the slug alongside the name and
+  // keep the old one in `previousSlug` — seo.ts 301s requests for it to the
+  // new slug instead of 404ing a link Google (or a bookmark) already has.
+  if (fields.name !== undefined && fields.name !== existing[0].name) {
+    patch.name = fields.name;
+    patch.slug = await generateUniqueSlug(fields.name, id);
+    patch.previousSlug = existing[0].slug;
+  } else if (fields.name !== undefined) {
+    patch.name = fields.name;
+  }
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.majors !== undefined) patch.majors = setMajors(fields.majors);
   if (fields.link !== undefined) patch.link = fields.link;
@@ -1022,6 +1071,17 @@ export async function approveSuggestedEdit(id: number, reviewedBy: string): Prom
     const patch: Record<string, unknown> =
       existing.field === "majors" ? { majors: setMajors(JSON.parse(existing.newValue)) } : { [existing.field]: existing.newValue };
     patch.updatedAt = sql`now()`;
+
+    // Same slug-preservation concern as updateOpportunity() above: an
+    // approved name-change suggestion must not silently break the live
+    // /opportunities/:slug URL.
+    if (existing.field === "name") {
+      const [opp] = await tx.select().from(opportunities).where(eq(opportunities.id, existing.opportunityId));
+      if (opp && opp.name !== existing.newValue) {
+        patch.slug = await generateUniqueSlug(existing.newValue, existing.opportunityId);
+        patch.previousSlug = opp.slug;
+      }
+    }
 
     await tx.update(opportunities).set(patch).where(eq(opportunities.id, existing.opportunityId));
     await tx

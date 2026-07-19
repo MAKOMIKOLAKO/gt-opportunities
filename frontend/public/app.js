@@ -1148,7 +1148,29 @@ function updateFilterChrome() {
 // Init
 // ---------------------------------------------------------------------
 
+// Reads deep-link params so links from the server-rendered SEO pages
+// (backend/src/routes/seo.ts's "open in interactive app" link, and the
+// WebSite/SearchAction JSON-LD on this page) land the SPA in the right
+// state instead of always starting at the bare directory:
+//   ?opportunity=<id> -> open that listing's detail view directly
+//   ?search=<term>    -> pre-fill the search box (also what the
+//                        sitelinks-search-box JSON-LD's SearchAction targets)
+//   ?type=vip|lab|club -> pre-select a type filter
+function applyDeepLinkFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const opportunityId = Number(params.get("opportunity"));
+  if (Number.isInteger(opportunityId) && opportunityId > 0) {
+    Object.assign(state, { view: "detail", selectedId: opportunityId });
+    return;
+  }
+  const search = params.get("search");
+  const type = params.get("type");
+  if (search) state.query = search;
+  if (type === "vip" || type === "lab" || type === "club") state.typeFilter = type;
+}
+
 (async function init() {
+  applyDeepLinkFromUrl();
   render();
   try {
     state.allTags = await fetchTags();
