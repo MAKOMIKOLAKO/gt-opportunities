@@ -56,6 +56,8 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   gap: 28px;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .gt-brand {
@@ -513,6 +515,18 @@ main {
 }
 .detail-contact { font-size: 13px; color: var(--gray-matter); }
 
+.propose-edit-btn {
+  border: 1.5px solid var(--navy);
+  background: none;
+  color: var(--navy);
+  padding: 12px 20px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.propose-edit-btn:hover { background: var(--diploma); }
+
 /* ---------- Additional links (approved links queue) ---------- */
 
 .links-block { margin: 20px 0; padding-top: 8px; border-top: 1px solid #EFF1EE; }
@@ -863,4 +877,15 @@ main {
   .org-list-row .org-list-cell.discipline { display: none; }
   .submit-form-row { grid-template-columns: 1fr; }
   .gt-header-institution { display: none; }
+}
+
+@media (max-width: 480px) {
+  .gt-header-inner { padding: 12px 16px; gap: 12px; }
+  .gt-nav { margin-left: 0; gap: 4px; }
+  .gt-nav-btn { padding: 7px 12px; font-size: 13px; }
+  .gt-header-spacer { flex-basis: 0; }
+  main { padding: 20px 16px; }
+  .dir-heading h1 { font-size: 24px; }
+  .detail-card { padding: 20px; }
+  .detail-footer { flex-direction: column; align-items: stretch; }
 }

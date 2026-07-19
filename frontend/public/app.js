@@ -423,8 +423,10 @@ async function loadDetail(id) {
 
         <div class="detail-footer">
           ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
+          <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
+        ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
 
         ${renderLinksBlock(opp)}
         ${renderDetailUtilityRow(opp)}
@@ -440,10 +442,13 @@ async function loadDetail(id) {
 }
 
 // ---------------------------------------------------------------------
-// Rendering — detail page utility actions ("Submit an icon" / "Suggest an
-// edit"). Kept as small, unobtrusive text links rather than full inline
-// sections — these are rare, incidental actions, not part of the normal
-// browsing flow, so they open a modal instead of eating page real estate.
+// Rendering — detail page utility actions ("Submit an icon"). Kept as a
+// small, unobtrusive text link rather than a full inline section — this is
+// a rare, incidental action, not part of the normal browsing flow, so it
+// opens a modal instead of eating page real estate. ("Suggest an edit" used
+// to live here too, but that's a primary action per the design spec — see
+// Campus Opportunity Finder.dc.html's "Propose an edit" button — so it now
+// lives in .detail-footer next to "How to Apply" instead of being buried.)
 //
 // Icon submission is scoped to the detail page only, not the "submit an
 // org" form — a brand new org submission has no id until an admin
@@ -453,14 +458,11 @@ async function loadDetail(id) {
 // ---------------------------------------------------------------------
 
 function renderDetailUtilityRow(opp) {
-  const feedback = state.iconSubmitMessage || state.suggestEditMessage;
   return `
     <div class="detail-utility-row">
       <button class="utility-link-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
-      <span class="utility-sep">&middot;</span>
-      <button class="utility-link-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
     </div>
-    ${feedback ? `<div class="utility-feedback">${escapeHtml(feedback)}</div>` : ""}
+    ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
   `;
 }
 
