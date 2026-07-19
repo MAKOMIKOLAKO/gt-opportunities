@@ -6,6 +6,7 @@ import {
   getAllTags,
   getApprovedReviews,
   getApprovedReviewById,
+  getRelatedOpportunities,
   insertReview,
   insertReport,
 } from "../db/data-access.js";
@@ -42,7 +43,8 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
     return;
   }
   const reviews = await getApprovedReviews(id);
-  res.json({ result: { ...result, reviews } });
+  const relatedOrgs = await getRelatedOpportunities(id);
+  res.json({ result: { ...result, reviews, relatedOrgs } });
 });
 
 publicRouter.get("/tags", async (_req, res) => {

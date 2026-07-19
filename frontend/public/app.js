@@ -387,10 +387,56 @@ async function loadDetail(id) {
 
         ${renderReviewsBlock(opp)}
       </div>
+
+      ${renderRelatedOrgsBlock(opp)}
     `;
   } catch (err) {
     container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
+}
+
+// ---------------------------------------------------------------------
+// Rendering — related organizations
+//
+// `relatedOrgs` comes back on the detail response (see API-CONTRACT.md),
+// precomputed server-side from embedding similarity — never computed here.
+// Deliberately cross-category: a VIP team's related orgs can include labs
+// and clubs with zero tag overlap, so this section does NOT group/label by
+// type the way the directory filters do. Hidden entirely (not rendered as
+// an empty slider) when there's nothing to show — most opportunities will
+// have an empty relatedOrgs array until OPENAI_API_KEY is configured
+// server-side (see BUILD_NOTES.md), so this is the common case for now.
+// ---------------------------------------------------------------------
+
+function renderRelatedOrgsBlock(opp) {
+  const related = (opp.relatedOrgs || []).map(decorateOrg);
+  if (related.length === 0) return "";
+  return `
+    <div class="related-orgs-block">
+      <h2>Related organizations</h2>
+      <div class="related-orgs-scroller">
+        ${related.map(renderRelatedOrgCard).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderRelatedOrgCard(o) {
+  return `
+    <button class="org-card related-org-card" data-action="open-detail" data-id="${o.id}">
+      <div class="org-card-top">
+        <div class="org-icon" style="background:${o.iconColor}">${o.initials}</div>
+      </div>
+      <div>
+        <div class="org-card-name">${escapeHtml(o.name)}</div>
+        <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
+      </div>
+      <div class="org-card-blurb">${escapeHtml(truncate(o.description, 110))}</div>
+      <div class="tag-chips">
+        ${(o.tags || []).slice(0, 3).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
+      </div>
+    </button>
+  `;
 }
 
 // ---------------------------------------------------------------------

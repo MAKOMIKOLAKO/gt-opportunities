@@ -137,6 +137,21 @@ Response `200`: `{ "result": Opportunity }` — `Opportunity` here includes a
 `reviews` array (Addition 3): approved reviews for this opportunity only,
 most-recent-first. Backed by `getApprovedReviews()` — structurally cannot
 include pending/rejected reviews.
+
+Also includes a `relatedOrgs` array (Related Organizations feature):
+0-8 other approved `Opportunity` objects (same shape as above, minus
+`reviews`/`relatedOrgs` themselves — no nesting), ordered most-related
+first. Backed by a precomputed cache (`related_opportunities` table),
+never computed live per request — see `BUILD_NOTES.md`. Matching is
+embedding-based (cosine similarity over `text-embedding-3-small`
+embeddings of name + description + tag labels) with a small tag-overlap
+boost on top; matching is deliberately **cross-category** — `type`
+(vip/lab/club) is never used as a scoring signal, so a VIP team and an
+Engage club can appear in each other's `relatedOrgs` with zero shared
+tags. **`relatedOrgs` is `[]` until `OPENAI_API_KEY` is configured and
+embeddings have been generated** (see `.env.example`) — the field is
+always present, just empty until then.
+
 Response `404`: `{ "error": "not_found" }` (also returned if the row exists
 but is not approved — public callers must not be able to distinguish
 "pending/rejected" from "doesn't exist").
