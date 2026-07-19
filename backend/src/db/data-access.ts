@@ -36,6 +36,10 @@ export interface OpportunityDTO {
   source: string;
   status: OpportunityStatus;
   submittedBy: string | null;
+  // Live, publicly-served icon. `iconPendingUrl` (submitted-but-unapproved)
+  // is deliberately NOT part of this public DTO — see AdminOpportunityDTO
+  // below for the admin-only shape that includes it.
+  iconUrl: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
   lastVerified: string | null;
@@ -43,6 +47,12 @@ export interface OpportunityDTO {
   updatedAt: string;
   tags: { slug: string; label: string; category: string }[];
 }
+
+/**
+ * ADMIN-ONLY DTO — extends OpportunityDTO with `iconPendingUrl`, the
+ * submitted-but-not-yet-approved icon. Never returned from a public route.
+ */
+export type AdminOpportunityDTO = OpportunityDTO & { iconPendingUrl: string | null };
 
 async function attachTags(rows: (typeof opportunities.$inferSelect)[]): Promise<OpportunityDTO[]> {
   if (rows.length === 0) return [];
@@ -77,6 +87,7 @@ async function attachTags(rows: (typeof opportunities.$inferSelect)[]): Promise<
     source: r.source,
     status: r.status,
     submittedBy: r.submittedBy,
+    iconUrl: r.iconUrl,
     reviewedBy: r.reviewedBy,
     reviewedAt: r.reviewedAt,
     lastVerified: r.lastVerified,
@@ -313,11 +324,15 @@ export async function insertSubmission(input: SubmissionInput): Promise<number> 
   return id;
 }
 
-/** ADMIN-ONLY: fetch a single row regardless of status. */
-export async function getByIdForAdmin(id: number): Promise<OpportunityDTO | null> {
+/**
+ * ADMIN-ONLY: fetch a single row regardless of status, with `iconPendingUrl`
+ * attached (the one field the public DTO never exposes).
+ */
+export async function getByIdForAdmin(id: number): Promise<AdminOpportunityDTO | null> {
   const rows = await db.select().from(opportunities).where(eq(opportunities.id, id));
   if (rows.length === 0) return null;
-  return (await attachTags(rows))[0];
+  const dto = (await attachTags(rows))[0];
+  return { ...dto, iconPendingUrl: rows[0].iconPendingUrl };
 }
 
 /** ADMIN-ONLY: approve a pending/rejected row, stamping reviewedBy/reviewedAt. */
@@ -405,6 +420,85 @@ export async function updateOpportunity(
   });
 
   await refreshSearchBlob(id);
+  return getByIdForAdmin(id);
+}
+
+// ---- Org profile icon (icon submission feature) ----
+// Public submission -> admin approve/reject, following the same
+// pending-review-lifecycle shape as opportunities/reviews above.
+
+/**
+ * Public path: submit a candidate icon URL for an EXISTING (public/approved)
+ * opportunity. Sets `iconPendingUrl` only — never touches the live `iconUrl`.
+ * Returns false if the opportunity doesn't exist (caller decides how to
+ * respond; route layer additionally requires the opportunity be public
+ * before calling this, so pending/rejected rows can't be probed via this
+ * path either).
+ */
+export async function submitIconPending(opportunityId: number, url: string): Promise<boolean> {
+  const existing = await db.select({ id: opportunities.id }).from(opportunities).where(eq(opportunities.id, opportunityId));
+  if (existing.length === 0) return false;
+  await db
+    .update(opportunities)
+    .set({ iconPendingUrl: url, updatedAt: sql`now()` })
+    .where(eq(opportunities.id, opportunityId));
+  return true;
+}
+
+/**
+ * ADMIN-ONLY: list opportunities with a pending icon submission awaiting
+ * review (iconPendingUrl IS NOT NULL).
+ */
+export async function getPendingIcons(): Promise<
+  { id: number; name: string; iconUrl: string | null; iconPendingUrl: string | null }[]
+> {
+  const rows = await db
+    .select({
+      id: opportunities.id,
+      name: opportunities.name,
+      iconUrl: opportunities.iconUrl,
+      iconPendingUrl: opportunities.iconPendingUrl,
+    })
+    .from(opportunities)
+    .where(sql`${opportunities.iconPendingUrl} IS NOT NULL`)
+    .orderBy(opportunities.name);
+  return rows;
+}
+
+/**
+ * ADMIN-ONLY: promote the pending icon to live, clearing the pending slot.
+ * `reviewedBy` is accepted for parity with the other admin mutation helpers
+ * (and route-layer stamping conventions) but deliberately does NOT write to
+ * the opportunity's own `reviewedBy`/`reviewedAt` columns — those track the
+ * opportunity's approve/reject review, a separate lifecycle from icon
+ * review, and overwriting them here would clobber that history.
+ */
+export async function approveIcon(id: number, _reviewedBy: string): Promise<AdminOpportunityDTO | null> {
+  const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
+  if (existing.length === 0) return null;
+  const pending = existing[0].iconPendingUrl;
+  await db
+    .update(opportunities)
+    .set({
+      iconUrl: pending,
+      iconPendingUrl: null,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(opportunities.id, id));
+  return getByIdForAdmin(id);
+}
+
+/** ADMIN-ONLY: discard the pending icon submission without touching the live icon. See approveIcon() note re: reviewedBy. */
+export async function rejectIcon(id: number, _reviewedBy: string): Promise<AdminOpportunityDTO | null> {
+  const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
+  if (existing.length === 0) return null;
+  await db
+    .update(opportunities)
+    .set({
+      iconPendingUrl: null,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(opportunities.id, id));
   return getByIdForAdmin(id);
 }
 
