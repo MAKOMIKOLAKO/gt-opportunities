@@ -17,7 +17,7 @@
 //     `tsvector` column (Postgres's real full-text index type, replacing
 //     SQLite's FTS5 virtual table + triggers) with a GIN index, kept in
 //     sync by `refreshSearchBlob()` in data-access.ts on every write.
-import { pgTable, text, integer, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, serial, timestamp, primaryKey, index, customType } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // Postgres `tsvector` type — drizzle-orm has no built-in column helper for
@@ -28,6 +28,20 @@ import { sql } from "drizzle-orm";
 const tsvector = customType<{ data: string }>({
   dataType() {
     return "tsvector";
+  },
+});
+
+// pgvector's `vector(n)` type — same customType escape hatch as `tsvector`
+// above (drizzle-orm has no built-in pgvector helper either). Dimension is
+// fixed at 1536 to match OpenAI's `text-embedding-3-small` output (see
+// backend/src/lib/embeddings.ts). Only ever written through a raw pgvector
+// literal string (`[0.1,0.2,...]`, see embedOpportunity()) and read through
+// the `<=>` cosine-distance operator in raw `sql` (see
+// backend/src/lib/related-opportunities.ts) — never touched as a plain JS
+// array by drizzle's query builder.
+const vector1536 = customType<{ data: string }>({
+  dataType() {
+    return "vector(1536)";
   },
 });
 
@@ -66,6 +80,13 @@ export const opportunities = pgTable(
     // (see refreshSearchBlob). Nullable because it's populated by app code,
     // not a generated column.
     searchVector: tsvector("search_vector"),
+    // Semantic embedding of name + description + tag labels, used for
+    // cross-category "related organizations" matching (see
+    // backend/src/lib/embeddings.ts / related-opportunities.ts). Nullable:
+    // populated by app code (embedOpportunity()) whenever OPENAI_API_KEY is
+    // set, NOT a generated column, and legitimately null until a live key
+    // is configured or the one-off backfill script is run.
+    embedding: vector1536("embedding"),
     source: text("source").$type<OpportunitySource>().notNull(),
     status: text("status").$type<OpportunityStatus>().notNull().default("pending"),
     submittedBy: text("submitted_by"),
@@ -148,3 +169,34 @@ export const reports = pgTable("reports", {
   resolvedBy: text("resolved_by"),
   resolvedAt: timestamp("resolved_at", { mode: "string" }),
 });
+
+// ---- Related organizations (embedding-based, cross-category) ----
+// Precomputed cache of "related organizations" per opportunity, keyed on
+// cosine similarity between `opportunities.embedding` vectors, with a small
+// tag-overlap boost (see backend/src/lib/related-opportunities.ts). Deliberately
+// NEVER computed live per page view — recomputeRelated() replaces a given
+// opportunity's rows here, and callers just read the cache back
+// (getRelatedOpportunities() in data-access.ts). No same-`type` bonus is
+// ever applied here or in the scoring logic — cross-category matches (e.g.
+// a VIP robotics team <-> an Engage robotics club) are a hard requirement.
+export const relatedOpportunities = pgTable(
+  "related_opportunities",
+  {
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    relatedOpportunityId: integer("related_opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    // Blended score: (1 - cosine_distance) + tag-overlap boost. Not a raw
+    // cosine similarity alone — see recomputeRelated().
+    score: real("score").notNull(),
+    // 1-based position of `relatedOpportunityId` within `opportunityId`'s
+    // related list, most-similar first. Drives ORDER BY on read.
+    rank: integer("rank").notNull(),
+    computedAt: timestamp("computed_at", { mode: "string" }).notNull().default(sql`now()`),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.opportunityId, table.relatedOpportunityId] }),
+  })
+);
