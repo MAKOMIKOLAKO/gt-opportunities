@@ -386,15 +386,15 @@ function renderDetailShell() {
   `;
 }
 
-// Fetched opportunities, keyed by id. Opening/closing the "Suggest an edit"
-// / "Submit an icon" modals just toggles state and calls render() like any
-// other state change, but the detail view shouldn't refetch-and-flash to
-// "Loading…" for that — render from cache when we already have the data.
-const detailCache = {};
+// Detail data is cached per-id so that opening/closing the "Suggest an
+// edit" or "Submit an icon" modals — which go through the same setState()
+// -> render() path as everything else — doesn't refetch and flash the
+// whole detail pane back to a loading state on every click.
+let detailCache = {};
 
-function renderDetailContent(opp) {
-  const d = detailFields(opp);
-  return `
+function renderDetailBody(opp) {
+    const d = detailFields(opp);
+    return `
       <div class="detail-card">
         <div class="detail-header">
           ${renderOrgIcon(opp, "lg")}
@@ -450,18 +450,23 @@ function renderDetailContent(opp) {
     `;
 }
 
-async function loadDetail(id) {
+async function loadDetail(id, { forceRefresh = false } = {}) {
   const container = el("#detailContent");
-  if (detailCache[id]) {
-    container.innerHTML = renderDetailContent(detailCache[id]);
+  const cached = detailCache[id];
+  if (cached && !forceRefresh) {
+    container.innerHTML = renderDetailBody(cached);
     return;
   }
   try {
     const opp = decorateOrg(await fetchOpportunity(id));
     detailCache[id] = opp;
-    container.innerHTML = renderDetailContent(opp);
+    // The container may have been swapped out (view changed / user
+    // navigated away) while this fetch was in flight.
+    if (state.view !== "detail" || state.selectedId !== id) return;
+    el("#detailContent").innerHTML = renderDetailBody(opp);
   } catch (err) {
-    container.innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
+    if (state.view !== "detail" || state.selectedId !== id) return;
+    el("#detailContent").innerHTML = `<div class="state-msg error">${err.message === "not_found" ? "This opportunity could not be found." : "Failed to load: " + escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -922,21 +927,34 @@ function escapeAttr(str) {
 // Main render / event wiring
 // ---------------------------------------------------------------------
 
+// The modal forms (review/flag/icon/suggest-edit) toggle open and closed
+// through the same setState()->render() path as every other state change,
+// but they only ever open from the detail page and don't affect the
+// header/detail/footer content at all. Rebuilding the *entire* #app
+// innerHTML just to show/hide a modal tears down and recreates the whole
+// page's DOM (header, nav, detail card, org icons, footer) on every click —
+// which is what actually reads as "the page refreshing", even with
+// loadDetail()'s cache avoiding a refetch. When we're still on the same
+// detail page as the last render, skip the full shell rebuild and only
+// refresh #detailContent (from cache) and #modalRoot.
+let lastDetailShellId = null;
+
 function render() {
   const app = el("#app");
+
+  if (state.view === "detail" && state.selectedId === lastDetailShellId && el("#pageShell")) {
+    loadDetail(state.selectedId);
+    renderModals();
+    return;
+  }
+  lastDetailShellId = state.view === "detail" ? state.selectedId : null;
+
   let body;
   if (state.view === "detail") body = renderDetailShell();
   else if (state.view === "submit") body = renderSubmit();
   else body = renderDirectory();
 
-  app.innerHTML =
-    renderHeader() +
-    body +
-    renderFooter() +
-    renderReviewFormModal() +
-    renderFlagFormModal() +
-    renderIconFormModal() +
-    renderSuggestEditModal();
+  app.innerHTML = `<div id="pageShell">${renderHeader() + body + renderFooter()}</div><div id="modalRoot"></div>`;
   wireEvents();
 
   if (state.view === "directory") {
@@ -945,6 +963,14 @@ function render() {
   } else if (state.view === "detail") {
     loadDetail(state.selectedId);
   }
+
+  renderModals();
+}
+
+function renderModals() {
+  const modalRoot = el("#modalRoot");
+  if (!modalRoot) return;
+  modalRoot.innerHTML = renderReviewFormModal() + renderFlagFormModal() + renderIconFormModal() + renderSuggestEditModal();
 }
 
 let eventsWired = false;
