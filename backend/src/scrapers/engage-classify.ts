@@ -24,6 +24,7 @@ import { TAG_VOCABULARY } from "../db/tag-vocabulary.js";
 import { classifyOrg } from "./engage-classify-rules.js";
 import { embedOpportunity } from "../lib/embeddings.js";
 import { recomputeRelated } from "../lib/related-opportunities.js";
+import { generateUniqueSlug } from "../lib/slug.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RAW_CACHE_DIR = path.resolve(__dirname, "../../../data/raw-cache/engage");
@@ -130,9 +131,11 @@ async function upsertOpportunity(
       .where(eq(opportunities.id, opportunityId));
     await db.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId));
   } else {
+    const slug = await generateUniqueSlug(org.name);
     const [row] = await db
       .insert(opportunities)
       .values({
+        slug,
         type: "club",
         name: org.name,
         description: org.description,

@@ -3,6 +3,10 @@
   "buildCommand": "npm run migrate --workspace backend",
   "outputDirectory": "frontend/public",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" }
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/opportunities/(.*)", "destination": "/api" },
+    { "source": "/categories/(.*)", "destination": "/api" },
+    { "source": "/sitemap.xml", "destination": "/api" },
+    { "source": "/robots.txt", "destination": "/api" }
   ]
 }
