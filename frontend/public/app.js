@@ -7,7 +7,7 @@ const API_BASE = "/api"; // same-origin; frontend/server.js proxies this to the 
 const TYPE_META = {
   vip: { label: "VIP Team", color: "#003057" },
   lab: { label: "Research Lab", color: "#5F249F" },
-  club: { label: "Student Org", color: "#008C95" },
+  club: { label: "Student Org", color: "#00707A" },
 };
 
 const TYPE_FILTERS = [
