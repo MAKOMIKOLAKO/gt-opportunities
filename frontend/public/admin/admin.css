@@ -218,4 +218,11 @@
   .admin-status-tabs { gap: 10px; flex-wrap: wrap; }
   .admin-topbar { padding: 14px 16px; }
   .admin-main { padding: 20px 16px; }
+
+  /* Inputs under 16px trigger iOS Safari's auto-zoom on focus. */
+  .admin-field input,
+  .admin-edit-form input,
+  .admin-edit-form textarea {
+    font-size: 16px;
+  }
 }

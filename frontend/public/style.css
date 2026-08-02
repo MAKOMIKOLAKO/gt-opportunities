@@ -1023,6 +1023,24 @@ main {
   }
   .admin-queue-actions { gap: 12px; }
   .detail-footer-actions { gap: 12px; }
+
+  /* Form inputs under 16px trigger iOS Safari's auto-zoom on focus, and
+     small body copy is harder to read one-handed on a phone. */
+  input,
+  select,
+  textarea,
+  .dir-search input,
+  .submit-form input,
+  .submit-form select,
+  .submit-form textarea,
+  .link-row input,
+  .link-row select,
+  .review-form-modal textarea,
+  .discipline-select {
+    font-size: 16px;
+  }
+  .detail-desc { font-size: 16px; }
+  .org-card-blurb { font-size: 14px; }
 }
 
 /* ---------------------------------------------------------------------
