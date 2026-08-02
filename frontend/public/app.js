@@ -642,12 +642,12 @@ function renderSuggestEditModal() {
       <div class="review-form-modal" data-stop-close="1">
         <h3>Suggest an edit</h3>
         <form id="suggestEditForm" data-id="${state.suggestEditFormOpportunityId}">
-          <label>Field</label>
-          <select name="field" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:13.5px;margin-bottom:14px;">
+          <label for="suggestEditField">Field</label>
+          <select id="suggestEditField" name="field" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:16px;margin-bottom:14px;">
             ${SUGGEST_EDIT_FIELDS.map((f) => `<option value="${f.key}">${escapeHtml(f.label)}</option>`).join("")}
           </select>
-          <label>Proposed new value</label>
-          <textarea name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
+          <label for="suggestEditValue">Proposed new value</label>
+          <textarea id="suggestEditValue" name="newValue" required rows="2" maxlength="2000" placeholder="For Majors sought, separate multiple majors with commas"></textarea>
           <div id="suggestEditError"></div>
           <div class="review-form-actions">
             <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
@@ -716,12 +716,12 @@ function renderReviewFormModal() {
         <h3>Write a review</h3>
         <div class="modal-sub">Anonymous — we don't collect your name, email, or any identifying info. No rating, just three short answers.</div>
         <form id="reviewForm">
-          <label>What's the time commitment actually like?</label>
-          <textarea name="timeCommitment" required rows="2" maxlength="1000"></textarea>
-          <label>What should someone know before applying?</label>
-          <textarea name="beforeApplying" required rows="2" maxlength="1000"></textarea>
-          <label>Any advice for a new member?</label>
-          <textarea name="adviceNewMember" required rows="2" maxlength="1000"></textarea>
+          <label for="reviewTimeCommitment">What's the time commitment actually like?</label>
+          <textarea id="reviewTimeCommitment" name="timeCommitment" required rows="2" maxlength="1000"></textarea>
+          <label for="reviewBeforeApplying">What should someone know before applying?</label>
+          <textarea id="reviewBeforeApplying" name="beforeApplying" required rows="2" maxlength="1000"></textarea>
+          <label for="reviewAdviceNewMember">Any advice for a new member?</label>
+          <textarea id="reviewAdviceNewMember" name="adviceNewMember" required rows="2" maxlength="1000"></textarea>
           <div id="reviewFormError"></div>
           <div class="review-form-actions">
             <button type="button" class="review-form-cancel-btn" data-action="close-review-form">Cancel</button>
@@ -741,15 +741,15 @@ function renderFlagFormModal() {
         <h3>Flag this review</h3>
         <div class="modal-sub">For PIs/advisors/club leaders to request re-review of a published review. No account needed.</div>
         <form id="flagForm">
-          <label>Reason</label>
-          <select name="category" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:13.5px;margin-bottom:14px;">
+          <label for="flagCategory">Reason</label>
+          <select id="flagCategory" name="category" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:16px;margin-bottom:14px;">
             <option value="other">Other / needs re-review</option>
             <option value="outdated_info">Outdated info</option>
             <option value="wrong_contact">Wrong contact info</option>
             <option value="broken_link">Broken link</option>
           </select>
-          <label>Details (optional)</label>
-          <textarea name="details" rows="3" maxlength="1000" placeholder="What's wrong with this review?"></textarea>
+          <label for="flagDetails">Details (optional)</label>
+          <textarea id="flagDetails" name="details" rows="3" maxlength="1000" placeholder="What's wrong with this review?"></textarea>
           <div id="flagFormError"></div>
           <div class="review-form-actions">
             <button type="button" class="review-form-cancel-btn" data-action="close-flag-form">Cancel</button>
@@ -792,13 +792,13 @@ function renderSubmit() {
       </div>
       <form id="submitForm" class="submit-form">
         <div>
-          <label>Organization name *</label>
-          <input type="text" name="name" required maxlength="200" placeholder="e.g. VIP-Autonomous Racing" />
+          <label for="submitName">Organization name *</label>
+          <input id="submitName" type="text" name="name" required maxlength="200" placeholder="e.g. VIP-Autonomous Racing" autocomplete="off" />
         </div>
         <div class="submit-form-row">
           <div>
-            <label>Type *</label>
-            <select name="type" required>
+            <label for="submitType">Type *</label>
+            <select id="submitType" name="type" required>
               <option value="">Select type</option>
               <option value="vip">VIP Team</option>
               <option value="lab">Research Lab</option>
@@ -806,24 +806,24 @@ function renderSubmit() {
             </select>
           </div>
           <div>
-            <label>Discipline / College</label>
-            <select name="discipline">
+            <label for="submitDiscipline">Discipline / College</label>
+            <select id="submitDiscipline" name="discipline">
               ${disciplineOptions.map((d) => `<option value="${escapeAttr(d)}">${escapeHtml(d)}</option>`).join("")}
             </select>
           </div>
         </div>
         <div>
-          <label>Short description *</label>
-          <textarea name="description" required rows="4" maxlength="2000" placeholder="What does this org do? Who should join?"></textarea>
+          <label for="submitDescription">Short description *</label>
+          <textarea id="submitDescription" name="description" required rows="4" maxlength="2000" placeholder="What does this org do? Who should join?"></textarea>
         </div>
         <div class="submit-form-row">
           <div>
-            <label>Skills / keywords</label>
-            <input type="text" name="tags" placeholder="comma separated, e.g. Python, CAD" />
+            <label for="submitTags">Skills / keywords</label>
+            <input id="submitTags" type="text" name="tags" placeholder="comma separated, e.g. Python, CAD" autocomplete="off" />
           </div>
           <div>
-            <label>Your GT email *</label>
-            <input type="email" name="email" required placeholder="you@gatech.edu" />
+            <label for="submitEmail">Your GT email *</label>
+            <input id="submitEmail" type="email" name="email" required placeholder="you@gatech.edu" autocomplete="email" inputmode="email" />
           </div>
         </div>
         <div class="submit-links-block">
@@ -846,9 +846,9 @@ function renderSubmit() {
 function linkRowHtml() {
   return `
     <div class="link-row">
-      <input type="text" class="link-row-label" placeholder="Label (e.g. Apply Now)" maxlength="200" />
-      <input type="url" class="link-row-url" placeholder="https://..." maxlength="500" />
-      <select class="link-row-type">
+      <input type="text" class="link-row-label" placeholder="Label (e.g. Apply Now)" maxlength="200" aria-label="Link label" autocomplete="off" />
+      <input type="url" class="link-row-url" placeholder="https://..." maxlength="500" aria-label="Link URL" inputmode="url" autocomplete="off" />
+      <select class="link-row-type" aria-label="Link type">
         <option value="apply">Apply</option>
         <option value="homepage">Homepage</option>
         <option value="social">Social</option>
