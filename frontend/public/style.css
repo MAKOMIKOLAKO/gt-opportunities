@@ -956,6 +956,18 @@ main {
   .dir-heading h1 { font-size: 24px; }
   .detail-card { padding: 20px; }
   .detail-footer { flex-direction: column; align-items: stretch; }
+  /* At 320-380px, main's content width (~288px) is narrower than the
+     300px grid column minimum below, which forces a column wider than
+     the viewport and causes horizontal scroll. Force a single column. */
+  .org-grid { grid-template-columns: 1fr; }
+
+  /* Server-rendered SEO pages (backend/src/routes/seo.ts) share this
+     stylesheet — same overflow risk from fixed padding + a flex header
+     row that doesn't shrink its text column. */
+  .ssr-main { padding: 20px 16px 48px; }
+  .ssr-detail-header { flex-wrap: wrap; }
+  .ssr-detail-header > *:last-child { min-width: 0; flex: 1; }
+  .ssr-card-list { grid-template-columns: 1fr; }
 }
 
 /* Collapsible filter drawer: below this width the filter row is hidden
