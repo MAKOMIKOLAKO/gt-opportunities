@@ -201,3 +201,21 @@
 }
 .admin-edit-form textarea { min-height: 70px; resize: vertical; }
 .admin-edit-actions { display: flex; justify-content: flex-end; }
+
+/* Touch targets: approve/reject/edit controls are comfortably clickable
+   with a mouse but under the ~44px touch minimum; widen the tap area and
+   the gap between adjacent buttons on mobile/tablet without touching
+   desktop density. */
+@media (max-width: 640px) {
+  .admin-btn,
+  .admin-tab {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .admin-row-actions { gap: 12px; flex-wrap: wrap; }
+  .admin-status-tabs { gap: 10px; flex-wrap: wrap; }
+  .admin-topbar { padding: 14px 16px; }
+  .admin-main { padding: 20px 16px; }
+}

@@ -950,6 +950,44 @@ main {
   .clear-filters-btn { align-self: flex-start; }
 }
 
+/* Touch targets: several controls are comfortably clickable with a mouse
+   (small padding, tight text links) but fall well under the ~44x44px
+   minimum recommended for touch. Bump them up, and give tightly-packed
+   groups (link-row remove buttons, admin approve/reject) more breathing
+   room, without changing desktop density above the breakpoint. */
+@media (max-width: 640px) {
+  .gt-nav-btn,
+  .type-pill,
+  .clear-filters-btn,
+  .icon-submit-btn,
+  .propose-edit-btn,
+  .add-link-row-btn,
+  .submit-again-btn,
+  .review-write-btn,
+  .review-form-cancel-btn,
+  .review-flag-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .view-toggle button { min-height: 44px; }
+  .remove-link-row-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .link-row { gap: 12px; }
+  .admin-tabs button,
+  .admin-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .admin-queue-actions { gap: 12px; }
+  .detail-footer-actions { gap: 12px; }
+}
+
 /* ---------------------------------------------------------------------
    Server-rendered SEO pages (backend/src/routes/seo.ts) — /opportunities/:slug
    and /categories/:type. Deliberately plain/lightweight styling reusing the
