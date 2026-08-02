@@ -12,6 +12,14 @@
   --purple: #5F249F;
   --teal: #008C95;
   --ink: #1a1d1e;
+
+  /* Admin status badges (admin/admin.css) — WCAG AA-checked text/bg pairs. */
+  --status-open-bg: #EAF6E9;
+  --status-open-fg: #1f7a3d;
+  --status-rolling-bg: #FFF3D6;
+  --status-rolling-fg: #7a5f00;
+  --status-closed-bg: #F1F1F1;
+  --status-closed-fg: #55585a;
 }
 
 html, body {
@@ -24,7 +32,7 @@ html, body {
 
 ::selection { background: var(--gold); color: var(--navy); }
 input, select, textarea, button { font-family: inherit; }
-input::placeholder, textarea::placeholder { color: #9aa0a3; }
+input::placeholder, textarea::placeholder { color: #6c7275; }
 a { color: inherit; }
 
 @keyframes fadeIn {
