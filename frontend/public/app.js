@@ -107,6 +107,7 @@ const state = {
   iconSubmitMessage: "",
   suggestEditFormOpportunityId: null,
   suggestEditMessage: "",
+  filtersOpen: false, // mobile-only filter drawer; ignored above the collapse breakpoint (see .dir-filters CSS)
 };
 
 let searchDebounce = null;
@@ -268,7 +269,13 @@ function renderDirectory() {
         </div>
       </div>
 
-      <div class="dir-filters">
+      <button type="button" class="filters-toggle-btn" data-action="toggle-filters"
+        aria-expanded="${state.filtersOpen}" aria-controls="dirFiltersPanel">
+        <span>Filters${hasActiveFilters ? ` <span class="filters-active-dot" aria-hidden="true"></span>` : ""}</span>
+        <span class="filters-toggle-chevron" aria-hidden="true">${state.filtersOpen ? "&#9650;" : "&#9660;"}</span>
+      </button>
+
+      <div id="dirFiltersPanel" class="dir-filters ${state.filtersOpen ? "is-open" : ""}">
         <span class="filter-label">Type</span>
         ${TYPE_FILTERS.map(
           (t) => `
@@ -1021,6 +1028,9 @@ function wireEvents() {
         break;
       case "clear-filters":
         setState({ query: "", typeFilter: "", discipline: "All Disciplines" });
+        break;
+      case "toggle-filters":
+        setState({ filtersOpen: !state.filtersOpen });
         break;
       case "open-detail":
         setState({

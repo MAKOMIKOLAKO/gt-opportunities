@@ -248,6 +248,32 @@ main {
 
 .filter-divider { width: 1px; height: 22px; background: var(--pi-mile); margin: 0 6px; }
 
+.filters-toggle-btn {
+  display: none;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border: 1.5px solid var(--pi-mile);
+  border-radius: 10px;
+  padding: 12px 16px;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--navy);
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.filters-active-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
 .discipline-select {
   border: 1.5px solid var(--pi-mile);
   background: #fff;
@@ -893,6 +919,35 @@ main {
   .dir-heading h1 { font-size: 24px; }
   .detail-card { padding: 20px; }
   .detail-footer { flex-direction: column; align-items: stretch; }
+}
+
+/* Collapsible filter drawer: below this width the filter row is hidden
+   behind a "Filters" toggle button instead of wrapping across several
+   lines above the results. */
+@media (max-width: 640px) {
+  .dir-toolbar { flex-direction: column; align-items: stretch; }
+  .dir-search { min-width: 0; }
+  .view-toggle { align-self: stretch; }
+  .view-toggle button { flex: 1; min-height: 40px; }
+
+  .filters-toggle-btn { display: flex; }
+
+  .dir-filters {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    background: #fff;
+    border: 1.5px solid var(--pi-mile);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+  .dir-filters.is-open { display: flex; }
+  .dir-filters .filter-divider { display: none; }
+  .dir-filters .type-pill { width: 100%; justify-content: flex-start; }
+  .discipline-select { width: 100%; }
+  .clear-filters-btn { align-self: flex-start; }
 }
 
 /* ---------------------------------------------------------------------
