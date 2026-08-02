@@ -258,14 +258,15 @@ function renderDirectory() {
       </div>
 
       <div class="dir-toolbar">
-        <div class="dir-search">
+        <div class="dir-search" role="search">
+          <label for="searchInput" class="visually-hidden">Search opportunities</label>
           <input id="searchInput" type="text" value="${escapeAttr(state.query)}"
             placeholder='Search by name, keyword, skill (e.g. "robotics", "Python")' autocomplete="off" />
-          <span class="dir-search-icon">&#8981;</span>
+          <span class="dir-search-icon" aria-hidden="true">&#8981;</span>
         </div>
-        <div class="view-toggle">
-          <button class="${state.layout === "grid" ? "active" : ""}" data-action="layout-grid">Grid</button>
-          <button class="${state.layout === "list" ? "active" : ""}" data-action="layout-list">List</button>
+        <div class="view-toggle" role="group" aria-label="Layout">
+          <button class="${state.layout === "grid" ? "active" : ""}" data-action="layout-grid" aria-pressed="${state.layout === "grid"}">Grid</button>
+          <button class="${state.layout === "list" ? "active" : ""}" data-action="layout-list" aria-pressed="${state.layout === "list"}">List</button>
         </div>
       </div>
 
@@ -276,16 +277,18 @@ function renderDirectory() {
       </button>
 
       <div id="dirFiltersPanel" class="dir-filters ${state.filtersOpen ? "is-open" : ""}">
-        <span class="filter-label">Type</span>
+        <span class="filter-label" id="typeFilterLabel">Type</span>
+        <div class="type-pill-group" role="group" aria-labelledby="typeFilterLabel">
         ${TYPE_FILTERS.map(
           (t) => `
-          <button class="type-pill ${state.typeFilter === t.key ? "active" : ""}" data-action="type-filter" data-type="${t.key}">
-            <span class="dot" style="background:${t.dot}"></span>${t.label}
+          <button class="type-pill ${state.typeFilter === t.key ? "active" : ""}" data-action="type-filter" data-type="${t.key}" aria-pressed="${state.typeFilter === t.key}">
+            <span class="dot" aria-hidden="true" style="background:${t.dot}"></span>${t.label}
           </button>
         `
         ).join("")}
+        </div>
         <div class="filter-divider"></div>
-        <span class="filter-label">Discipline</span>
+        <label for="disciplineSelect" class="filter-label">Discipline</label>
         <select id="disciplineSelect" class="discipline-select">
           ${DISCIPLINE_ORDER.map((d) => `<option value="${escapeAttr(d)}" ${d === state.discipline ? "selected" : ""}>${escapeHtml(d)}</option>`).join("")}
         </select>
