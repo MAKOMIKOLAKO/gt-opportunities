@@ -327,9 +327,10 @@ ${bodyHtml}
 //     silently rendering their own (wrong) org's editor under this URL —
 //     requireLeaderSession alone can't catch this since it has no idea what
 //     URL it's protecting (see its own comment in routes/leader.ts). Skipped
-//     entirely when the request carries `?token=` (an emailed claim/login
-//     link — lib/email.ts): that token is what leader-edit.js's
-//     consumeUrlTokenThenLoad() is about to POST to /api/leader/verify,
+//     entirely when the request carries `?token=` (a claim/login link an
+//     admin hand-delivered — see routes/admin.ts's claim-link box):
+//     that token is what leader-edit.js's consumeUrlTokenThenLoad() is
+//     about to POST to /api/leader/verify,
 //     which will overwrite any stale different-org cookie with a fresh
 //     session for *this* org — the mismatch guard would otherwise block a
 //     legitimate new-org invite from ever completing for someone already

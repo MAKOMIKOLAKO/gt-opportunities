@@ -5,11 +5,13 @@
 // Two ways in:
 //   1. Already has a `leader_session` httpOnly cookie (issued by a previous
 //      POST /api/leader/verify) — straight to loadOpportunity().
-//   2. Landed here via an emailed claim/login link (lib/email.ts), which
-//      points at this exact page with `?token=...` appended — consumeUrlToken()
-//      below POSTs it to /api/leader/verify to set that session cookie
-//      before anything else runs, then strips it from the URL bar so a
-//      reload/bookmark doesn't replay a single-use token.
+//   2. Landed here via a claim/login link an admin hand-delivered (see
+//      routes/admin.ts's claim-link box — no outbound email/SMS infra in
+//      this repo), which points at this exact page with `?token=...`
+//      appended — consumeUrlTokenThenLoad() below POSTs it to
+//      /api/leader/verify to set that session cookie before anything else
+//      runs, then strips it from the URL bar so a reload/bookmark doesn't
+//      replay a single-use token.
 //
 // No admin-style login form lives here. If loadOpportunity() 401s (no/
 // expired session and no valid ?token=), this page falls back to a minimal

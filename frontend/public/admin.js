@@ -294,12 +294,9 @@ async function copyClaimLink(rawPath, buttonEl) {
 function renderClaimLinkBox(claimLinkData, keyForCopyBtn) {
   if (!claimLinkData) return "";
   const fullUrl = `${window.location.origin}${claimLinkData.claimLinkPath}`;
-  const label = claimLinkData.emailSent
-    ? "Claim link — emailed to the requester. Copy below as a backup."
-    : "Claim link — not emailed (no email on file, or Resend isn't configured). Copy and send this to the requester now.";
   return `
     <div class="claim-link-box">
-      <div class="claim-link-box-label">${claimLinkData.emailSent ? "✅ " : ""}${label}</div>
+      <div class="claim-link-box-label">Claim link — copy and send this to the requester now</div>
       <div class="claim-link-box-row">
         <input type="text" readonly value="${escapeHtml(fullUrl)}" onclick="this.select()" />
         <button type="button" class="admin-btn secondary" data-action="copy-claim-link" data-path="${escapeHtml(claimLinkData.claimLinkPath)}" data-key="${escapeHtml(keyForCopyBtn)}">Copy</button>
