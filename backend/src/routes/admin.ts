@@ -34,6 +34,7 @@ import {
   listAuditLogWithOpportunityName,
 } from "../db/data-access.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
+import { isValidSlugFormat } from "../lib/slug.js";
 import type {
   OpportunityStatus,
   OpportunityType,
@@ -371,6 +372,23 @@ adminRouter.patch("/admin/opportunities/:id", async (req, res) => {
   if (body.majors !== undefined && !Array.isArray(body.majors)) details.push("majors must be an array");
   if (body.tagSlugs !== undefined && !Array.isArray(body.tagSlugs)) details.push("tagSlugs must be an array");
   if (body.type !== undefined && !VALID_TYPES.includes(body.type)) details.push("type must be one of vip|lab|club");
+  // Admin-editable slug override (resolves a collision or cleans up an
+  // auto-generated one without going through a name change). Normalized to
+  // lowercase before validation/uniqueness so it can't create a
+  // differently-cased duplicate of an existing slug — GET /org/:slug already
+  // lowercases the URL param before lookup (routes/seo.ts), so an uppercase
+  // slug here would just be unreachable at its own canonical URL otherwise.
+  let normalizedSlug: string | undefined;
+  if (body.slug !== undefined) {
+    if (typeof body.slug !== "string" || body.slug.trim() === "") {
+      details.push("slug must be a non-empty string");
+    } else {
+      normalizedSlug = (body.slug as string).trim().toLowerCase();
+      if (!isValidSlugFormat(normalizedSlug)) {
+        details.push("slug must be lowercase alphanumeric segments separated by single hyphens (e.g. my-org-name)");
+      }
+    }
+  }
 
   if (details.length > 0) {
     res.status(400).json({ error: "validation_error", details });
@@ -386,16 +404,21 @@ adminRouter.patch("/admin/opportunities/:id", async (req, res) => {
       link: body.link,
       tagSlugs: body.tagSlugs,
       type: body.type,
+      slug: normalizedSlug,
     },
     body.approve === true,
     reviewedBy
   );
 
-  if (!result) {
+  if (result.kind === "not_found") {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json({ result });
+  if (result.kind === "slug_conflict") {
+    res.status(409).json({ error: "slug_conflict", details: [`slug "${normalizedSlug}" is already in use`] });
+    return;
+  }
+  res.json({ result: result.opportunity });
 });
 
 // ---- Club/VIP leader access review queue (module 4 of 7) ----

@@ -346,14 +346,14 @@ function renderCardsInto(orgs) {
         ${filtered
           .map((o) => {
             return `
-            <button class="org-list-row" data-action="open-detail" data-id="${o.id}">
+            <a class="org-list-row" href="/org/${escapeAttr(o.slug)}">
               <div class="org-list-name">
                 <span class="org-list-dot" style="background:${o.iconColor}"></span>
                 <span class="name">${escapeHtml(o.name)}</span>
               </div>
               <div class="org-list-cell type">${escapeHtml(o.typeLabel)}</div>
               <div class="org-list-cell discipline">${escapeHtml(o.discipline)}</div>
-            </button>
+            </a>
           `;
           })
           .join("")}
@@ -367,7 +367,7 @@ function renderCardsInto(orgs) {
       ${filtered
         .map(
           (o) => `
-        <button class="org-card" data-action="open-detail" data-id="${o.id}">
+        <a class="org-card" href="/org/${escapeAttr(o.slug)}">
           <div class="org-card-top">
             ${renderOrgIcon(o)}
           </div>
@@ -379,7 +379,7 @@ function renderCardsInto(orgs) {
           <div class="tag-chips">
             ${(o.tags || []).slice(0, 4).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
           </div>
-        </button>
+        </a>
       `
         )
         .join("")}
@@ -628,7 +628,7 @@ async function handleIconSubmit(e) {
 
 function renderRelatedOrgCard(o) {
   return `
-    <button class="org-card related-org-card" data-action="open-detail" data-id="${o.id}">
+    <a class="org-card related-org-card" href="/org/${escapeAttr(o.slug)}">
       <div class="org-card-top">
         ${renderOrgIcon(o)}
       </div>
@@ -640,7 +640,7 @@ function renderRelatedOrgCard(o) {
       <div class="tag-chips">
         ${(o.tags || []).slice(0, 3).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
       </div>
-    </button>
+    </a>
   `;
 }
 
@@ -1095,18 +1095,6 @@ function wireEvents() {
         break;
       case "toggle-filters":
         setState({ filtersOpen: !state.filtersOpen });
-        break;
-      case "open-detail":
-        setState({
-          view: "detail",
-          selectedId: Number(node.dataset.id),
-          suggestEditFormOpportunityId: null,
-          suggestEditMessage: "",
-          iconFormOpportunityId: null,
-          iconSubmitMessage: "",
-          accessRequestFormOpportunityId: null,
-          accessRequestMessage: "",
-        });
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });

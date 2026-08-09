@@ -18,9 +18,12 @@ import {
   getPublicBySlug,
   getApprovedLinks,
   getRelatedOpportunities,
+  getSessionByTokenHash,
 } from "../db/data-access.js";
 import type { OpportunityDTO } from "../db/data-access.js";
 import type { OpportunityType } from "../db/schema.js";
+import { hashToken } from "../lib/tokens.js";
+import { parseCookies, SESSION_COOKIE_NAME } from "./leader.js";
 
 export const seoRouter = Router();
 
@@ -123,7 +126,7 @@ function breadcrumbJsonLd(origin: string, items: { label: string; href?: string 
 
 function opportunityCardHtml(o: OpportunityDTO): string {
   return `<li class="ssr-card">
-  <a href="/opportunities/${escapeHtml(o.slug)}">
+  <a href="/org/${escapeHtml(o.slug)}">
     <h3>${escapeHtml(o.name)}</h3>
     <p>${escapeHtml(truncate(o.description || "", 140))}</p>
   </a>
@@ -148,13 +151,24 @@ function siteFooterHtml(): string {
 </footer>`;
 }
 
-// ---- GET /opportunities/:slug ----
-seoRouter.get("/opportunities/:slug", async (req, res) => {
+// ---- GET /org/:slug — the crawlable, live-rendered per-org page ----
+// Slug lookups are normalized to lowercase here (generateUniqueSlug() /
+// slugify() only ever produce lowercase slugs — see lib/slug.ts — so this
+// keeps e.g. /org/180-Degrees-Consulting and /org/180-degrees-consulting
+// resolving to the same row instead of 404ing one of them) and the response
+// is edge-cacheable for a short window: leader edits (routes/leader.ts) hit
+// this same live table with no rebuild step, so a long cache would show
+// stale data, but a bare `no-store` would send every hit straight to
+// Postgres. s-maxage=60 + stale-while-revalidate is the compromise — edits
+// show up within ~a minute, and a burst of traffic to one org's page still
+// only costs one origin hit per minute.
+seoRouter.get("/org/:slug", async (req, res) => {
   const origin = siteOrigin(req);
-  const result = await getPublicBySlug(req.params.slug);
+  const slug = req.params.slug.toLowerCase();
+  const result = await getPublicBySlug(slug);
 
   if (result.kind === "redirect") {
-    res.redirect(301, `/opportunities/${result.newSlug}`);
+    res.redirect(301, `/org/${result.newSlug}`);
     return;
   }
   if (result.kind === "not_found") {
@@ -163,13 +177,15 @@ seoRouter.get("/opportunities/:slug", async (req, res) => {
       pageShell({
         title: "Opportunity not found | GT Opportunity Finder",
         description: "This listing doesn't exist or is no longer published.",
-        canonical: `${origin}/opportunities/${req.params.slug}`,
+        canonical: `${origin}/org/${req.params.slug}`,
         jsonLd: [],
         bodyHtml: `${siteHeaderHtml()}<main class="ssr-main"><h1>Opportunity not found</h1><p>This listing doesn't exist or is no longer published. <a href="/">Browse the full directory</a>.</p></main>${siteFooterHtml()}`,
       })
     );
     return;
   }
+
+  res.set("Cache-Control", "s-maxage=60, stale-while-revalidate");
 
   const opp = result.opportunity;
   const [links, related] = await Promise.all([
@@ -178,7 +194,7 @@ seoRouter.get("/opportunities/:slug", async (req, res) => {
   ]);
 
   const typeLabel = TYPE_LABEL[opp.type];
-  const canonical = `${origin}/opportunities/${opp.slug}`;
+  const canonical = `${origin}/org/${opp.slug}`;
   const title = truncate(`${opp.name} — Georgia Tech ${typeLabel}`, 60) + " | GT Opportunity Finder";
   const description = truncate(
     opp.description || `${opp.name} is a Georgia Tech ${typeLabel.toLowerCase()}.`,
@@ -211,7 +227,7 @@ seoRouter.get("/opportunities/:slug", async (req, res) => {
 
   const relatedHtml = related.length
     ? `<h2>Related organizations</h2><ul class="ssr-related">${related
-        .map((r) => `<li><a href="/opportunities/${escapeHtml(r.slug)}">${escapeHtml(r.name)}</a></li>`)
+        .map((r) => `<li><a href="/org/${escapeHtml(r.slug)}">${escapeHtml(r.name)}</a></li>`)
         .join("")}</ul>`
     : "";
 
@@ -265,6 +281,90 @@ ${siteFooterHtml()}`;
   res.send(pageShell({ title, description, canonical, ogImage: opp.iconUrl, jsonLd, bodyHtml }));
 });
 
+// ---- GET /opportunities/:slug — legacy path, permanent redirect (module 6) ----
+// This was the org detail page's URL before the /org/:slug rename above; kept
+// as a 301 so old shared links/bookmarks/anything search engines already
+// indexed under the old prefix don't 404.
+seoRouter.get("/opportunities/:slug", (req, res) => {
+  res.redirect(301, `/org/${req.params.slug}`);
+});
+
+function managePageShell(bodyHtml: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Manage your listing — Opportunity Finder</title>
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+${bodyHtml}
+</body>
+</html>`;
+}
+
+// ---- GET /org/:slug/manage — leader self-service edit page (module 5) ----
+// Deliberately thin: the real editor is the existing static
+// frontend/public/leader-edit.js, which is entirely session-cookie-driven —
+// it never reads an id/slug out of its own URL, it just calls
+// GET/PUT /api/leader/opportunity and lets requireLeaderSession
+// (routes/leader.ts) resolve "which org" purely from the leader_session
+// cookie. This route's job is narrower:
+//   - resolve the slug so a bad/renamed one gets a real 404 or 301, not a
+//     silent client-side "not found";
+//   - NEVER cache this page (Cache-Control: no-store) — unlike the public
+//     /org/:slug page above, which deliberately does cache;
+//   - if a session cookie IS present but belongs to a *different* org than
+//     the slug in the URL (a leader bookmarks/shares the wrong link, or is
+//     logged into two orgs in different tabs), refuse with 403 instead of
+//     silently rendering their own (wrong) org's editor under this URL —
+//     requireLeaderSession alone can't catch this since it has no idea what
+//     URL it's protecting (see its own comment in routes/leader.ts).
+seoRouter.get("/org/:slug/manage", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const slug = req.params.slug.toLowerCase();
+  const result = await getPublicBySlug(slug);
+
+  if (result.kind === "redirect") {
+    res.redirect(301, `/org/${result.newSlug}/manage`);
+    return;
+  }
+  if (result.kind === "not_found") {
+    res.status(404).send(
+      managePageShell(
+        `<main class="ssr-main"><h1>Listing not found</h1><p>This listing doesn't exist or is no longer published.</p></main>`
+      )
+    );
+    return;
+  }
+
+  const cookies = parseCookies(req.header("cookie"));
+  const raw = cookies[SESSION_COOKIE_NAME];
+  if (raw) {
+    const session = await getSessionByTokenHash(hashToken(raw));
+    const valid = !!session && !session.revokedAt && new Date(session.expiresAt).getTime() > Date.now();
+    if (valid && session!.opportunityId !== result.opportunity.id) {
+      res.status(403).send(
+        managePageShell(
+          `<main class="ssr-main"><h1>Wrong organization</h1><p>You're currently logged in to manage a different organization's listing than <strong>${escapeHtml(
+            result.opportunity.name
+          )}</strong>. Log out and request a new access link for this org to continue.</p></main>`
+        )
+      );
+      return;
+    }
+  }
+
+  res.send(managePageShell(`<div id="app"></div>\n<script src="/leader-edit.js" defer></script>`));
+});
+
 // ---- GET /categories/:type ----
 seoRouter.get("/categories/:type", async (req, res) => {
   const origin = siteOrigin(req);
@@ -300,7 +400,7 @@ seoRouter.get("/categories/:type", async (req, res) => {
       itemListElement: results.map((o, i) => ({
         "@type": "ListItem",
         position: i + 1,
-        url: `${origin}/opportunities/${o.slug}`,
+        url: `${origin}/org/${o.slug}`,
         name: o.name,
       })),
     },
@@ -357,7 +457,7 @@ seoRouter.get("/sitemap.xml", async (req, res) => {
     ...staticUrls.map((u) => `  <url>\n    <loc>${escapeHtml(u.loc)}</loc>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`),
     ...all.map(
       (o) =>
-        `  <url>\n    <loc>${escapeHtml(`${origin}/opportunities/${o.slug}`)}</loc>\n    <lastmod>${new Date(o.updatedAt).toISOString()}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>`
+        `  <url>\n    <loc>${escapeHtml(`${origin}/org/${o.slug}`)}</loc>\n    <lastmod>${new Date(o.updatedAt).toISOString()}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>`
     ),
   ];
 

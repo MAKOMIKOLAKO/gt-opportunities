@@ -39,7 +39,7 @@ import {
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 import { embedOpportunity } from "../lib/embeddings.js";
 import { recomputeRelated } from "../lib/related-opportunities.js";
-import { generateUniqueSlug } from "../lib/slug.js";
+import { generateUniqueSlug, isSlugTaken } from "../lib/slug.js";
 
 export interface OpportunityDTO {
   id: number;
@@ -455,7 +455,17 @@ export interface EditFields {
   link?: string | null;
   tagSlugs?: string[];
   type?: OpportunityType;
+  // Explicit slug override — lets an admin resolve a collision or clean up
+  // an auto-generated slug without going through a name change. Format is
+  // validated at the route layer (routes/admin.ts); this layer only owns
+  // the uniqueness check (see UpdateOpportunityResult's "slug_conflict").
+  slug?: string;
 }
+
+export type UpdateOpportunityResult =
+  | { kind: "not_found" }
+  | { kind: "slug_conflict" }
+  | { kind: "ok"; opportunity: OpportunityDTO };
 
 /** ADMIN-ONLY: edit fields and, if approve=true, flip status to approved in the same write. */
 export async function updateOpportunity(
@@ -463,16 +473,24 @@ export async function updateOpportunity(
   fields: EditFields,
   approve: boolean,
   reviewedBy: string
-): Promise<OpportunityDTO | null> {
+): Promise<UpdateOpportunityResult> {
   const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
-  if (existing.length === 0) return null;
+  if (existing.length === 0) return { kind: "not_found" };
 
   const patch: Record<string, unknown> = { updatedAt: sql`now()` };
-  // Renaming a live opportunity would silently break its indexed
-  // /opportunities/:slug URL, so regenerate the slug alongside the name and
-  // keep the old one in `previousSlug` — seo.ts 301s requests for it to the
-  // new slug instead of 404ing a link Google (or a bookmark) already has.
-  if (fields.name !== undefined && fields.name !== existing[0].name) {
+  // Renaming a live opportunity would silently break its indexed /org/:slug
+  // URL, so regenerate the slug alongside the name and keep the old one in
+  // `previousSlug` — seo.ts 301s requests for it to the new slug instead of
+  // 404ing a link Google (or a bookmark) already has. An explicit
+  // fields.slug (admin manually resolving a collision or renaming the URL
+  // directly) takes priority over the name-driven auto-regeneration below
+  // when both are present in the same request.
+  if (fields.slug !== undefined && fields.slug !== existing[0].slug) {
+    if (await isSlugTaken(fields.slug, id)) return { kind: "slug_conflict" };
+    patch.slug = fields.slug;
+    patch.previousSlug = existing[0].slug;
+    if (fields.name !== undefined) patch.name = fields.name;
+  } else if (fields.name !== undefined && fields.name !== existing[0].name) {
     patch.name = fields.name;
     patch.slug = await generateUniqueSlug(fields.name, id);
     patch.previousSlug = existing[0].slug;
@@ -507,7 +525,8 @@ export async function updateOpportunity(
   // related orgs regardless of whether `approve` was true (an edit to an
   // already-approved row should still refresh its related-orgs cache).
   await reembedAndRecompute(id);
-  return getByIdForAdmin(id);
+  const opportunity = await getByIdForAdmin(id);
+  return opportunity ? { kind: "ok", opportunity } : { kind: "not_found" };
 }
 
 // ---- Org profile icon (icon submission feature) ----

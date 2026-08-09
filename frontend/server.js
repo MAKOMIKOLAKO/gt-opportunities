@@ -7,8 +7,9 @@
 // sees a cross-origin request, so app.js can just call fetch("/api/...").
 //
 // Beyond /api, this also proxies the server-rendered SEO routes
-// (backend/src/routes/seo.ts: /opportunities/:slug, /categories/:type,
-// /sitemap.xml, /robots.txt) so they resolve to real, crawlable HTML in
+// (backend/src/routes/seo.ts: /org/:slug, /org/:slug/manage,
+// /opportunities/:slug [legacy 301], /categories/:type, /sitemap.xml,
+// /robots.txt) so they resolve to real, crawlable HTML in
 // every hosting configuration — not just the Vercel one, where vercel.json
 // rewrites those same paths to the API function directly. Two-service
 // Railway deploys (this frontend service + a separate backend service) need
@@ -61,12 +62,13 @@ function proxyTo(backendPathPrefix) {
 app.use("/api", proxyTo("/api"));
 // These are mounted at the Express app's root on the backend (see
 // backend/src/app.ts), so the proxied path prefix is empty — req.url
-// already includes the leading "/opportunities/..." etc.
-app.use("/opportunities", proxyTo("/opportunities"));
+// already includes the leading "/org/..." etc.
+app.use("/org", proxyTo("/org"));
+app.use("/opportunities", proxyTo("/opportunities")); // legacy path, backend 301s to /org/:slug
 app.use("/categories", proxyTo("/categories"));
 app.get("/sitemap.xml", proxyTo(""));
 app.get("/robots.txt", proxyTo(""));
 
 app.listen(PORT, () => {
-  console.log(`frontend listening on :${PORT} (proxying /api, /opportunities, /categories, /sitemap.xml, /robots.txt -> ${BACKEND_URL})`);
+  console.log(`frontend listening on :${PORT} (proxying /api, /org, /opportunities, /categories, /sitemap.xml, /robots.txt -> ${BACKEND_URL})`);
 });

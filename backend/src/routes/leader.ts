@@ -41,11 +41,17 @@ export const leaderRouter = Router();
 // built into Express's `res.cookie` already) — a tiny manual parse of the
 // `Cookie` request header is simpler than adding a new dependency for one
 // call site.
-const SESSION_COOKIE_NAME = "leader_session";
+export const SESSION_COOKIE_NAME = "leader_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — picked as a reasonable "stay logged in" duration for a low-stakes shared org account; easy to shorten later if that turns out too long.
 const LOGIN_LINK_TTL_MS = 15 * 60 * 1000; // 15 minutes — short-lived, OTP-style, since login links are self-service-issued (see login-request route) rather than admin-vetted like the original claim link.
 
-function parseCookies(header: string | undefined): Record<string, string> {
+// Exported so the /org/:slug/manage SSR route (routes/seo.ts, module 5 of the
+// per-org-subpages task) can peek at the session cookie itself — it needs to
+// know *which* org a logged-in leader's session belongs to (to catch a
+// bookmarked/shared manage link for the wrong org) before the page's client
+// JS ever runs, which requireLeaderSession alone can't do since that
+// middleware 401s outright rather than reporting "logged in, wrong org".
+export function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
   for (const part of header.split(";")) {
