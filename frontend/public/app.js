@@ -346,7 +346,7 @@ function renderCardsInto(orgs) {
         ${filtered
           .map((o) => {
             return `
-            <a class="org-list-row" href="/org/${escapeAttr(o.slug)}">
+            <a class="org-list-row" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
               <div class="org-list-name">
                 <span class="org-list-dot" style="background:${o.iconColor}"></span>
                 <span class="name">${escapeHtml(o.name)}</span>
@@ -367,7 +367,7 @@ function renderCardsInto(orgs) {
       ${filtered
         .map(
           (o) => `
-        <a class="org-card" href="/org/${escapeAttr(o.slug)}">
+        <a class="org-card" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
           <div class="org-card-top">
             ${renderOrgIcon(o)}
           </div>
@@ -628,7 +628,7 @@ async function handleIconSubmit(e) {
 
 function renderRelatedOrgCard(o) {
   return `
-    <a class="org-card related-org-card" href="/org/${escapeAttr(o.slug)}">
+    <a class="org-card related-org-card" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
       <div class="org-card-top">
         ${renderOrgIcon(o)}
       </div>
@@ -1076,8 +1076,22 @@ function wireEvents() {
     }
     switch (node.dataset.action) {
       case "go-directory":
-        setState({ view: "directory" });
+        navigateToDirectory();
         break;
+      case "open-detail": {
+        // These are real <a href="/org/:slug"> elements now (module 4: real,
+        // shareable, crawlable per-org URLs) — a modifier-key click, middle
+        // click, or right-click must fall through to the browser's normal
+        // anchor behavior (new tab, copy link, etc.), not be hijacked into
+        // an in-app state change. Only a plain left click is intercepted, to
+        // pushState the real URL while keeping the existing in-app detail
+        // view instead of a full page navigation to the (deliberately
+        // plainer, crawler-facing) SSR page at that same URL.
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        navigateToDetail(Number(node.dataset.id), node.getAttribute("href"));
+        break;
+      }
       case "go-submit":
         setState({ view: "submit", submitted: false });
         break;
@@ -1296,6 +1310,52 @@ function updateFilterChrome() {
 //   ?search=<term>    -> pre-fill the search box (also what the
 //                        sitelinks-search-box JSON-LD's SearchAction targets)
 //   ?type=vip|lab|club -> pre-select a type filter
+// ---------------------------------------------------------------------
+// Routing — real URLs for detail views (module 4: per-org subpages), kept
+// entirely client-side via the History API so the in-app experience
+// (modal-style detail pane, reviews, icon upload, suggest-edit) is
+// unchanged — only the URL bar changes. A FRESH load of /org/:slug (a
+// pasted link, a crawler, a no-JS visitor) never reaches this code at all;
+// it's served straight from Postgres by the SSR route in
+// backend/src/routes/seo.ts. This is progressive enhancement on top of
+// that page, not a replacement for it.
+// ---------------------------------------------------------------------
+function navigateToDetail(id, href, { push = true } = {}) {
+  setState({
+    view: "detail",
+    selectedId: id,
+    suggestEditFormOpportunityId: null,
+    suggestEditMessage: "",
+    iconFormOpportunityId: null,
+    iconSubmitMessage: "",
+    accessRequestFormOpportunityId: null,
+    accessRequestMessage: "",
+  });
+  if (push && href) {
+    history.pushState({ view: "detail", id }, "", href);
+  }
+}
+
+function navigateToDirectory({ push = true } = {}) {
+  setState({ view: "directory" });
+  if (push) {
+    history.pushState({ view: "directory" }, "", "/");
+  }
+}
+
+// Browser back/forward: re-derive the app's view from the history entry
+// pushed above rather than the URL itself (org id, not slug, is what the
+// detail view needs) — falls back to the directory for the original
+// (pre-SPA-routing) history entry, which never got a `state` object.
+window.addEventListener("popstate", (e) => {
+  const s = e.state;
+  if (s && s.view === "detail" && Number.isInteger(s.id)) {
+    navigateToDetail(s.id, null, { push: false });
+  } else {
+    navigateToDirectory({ push: false });
+  }
+});
+
 function applyDeepLinkFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const opportunityId = Number(params.get("opportunity"));
