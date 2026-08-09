@@ -12,6 +12,8 @@
 // the session middleware later modules import to gate their own routes.
 import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
+import multer from "multer";
+import { uploadLeaderIcon, ALLOWED_ICON_MIME_TYPES, MAX_ICON_UPLOAD_BYTES } from "../lib/storage.js";
 import {
   getMagicLinkByTokenHash,
   consumeMagicLinkAtomic,
@@ -465,4 +467,52 @@ leaderRouter.put("/leader/opportunity", requireLeaderSession, async (req, res) =
     return;
   }
   res.json({ result });
+});
+
+// ---- POST /api/leader/opportunity/icon — direct icon upload, no review ----
+// Mirrors public.ts's POST /opportunities/:id/icon (real file upload, never
+// a leader-typed URL fetched server-side — same SSRF reasoning, see
+// lib/storage.ts) but WITHOUT the pending-review step: a leader already has
+// direct-write access to every other field via PUT /leader/opportunity
+// above, so gating just the icon behind admin approval would be
+// inconsistent. This route only uploads the file and hands back its public
+// URL — it does NOT write iconUrl itself, so the leader edit page fills the
+// icon URL field with the response and the existing Save button (PUT
+// /leader/opportunity) is what actually persists it, same single write path
+// as every other field on the form.
+const iconUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_ICON_UPLOAD_BYTES },
+});
+
+function handleIconUpload(req: Request, res: Response, next: NextFunction): void {
+  iconUpload.single("icon")(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      res.status(400).json({ error: "validation_error", details: [err.message] });
+      return;
+    }
+    if (err) {
+      next(err);
+      return;
+    }
+    next();
+  });
+}
+
+leaderRouter.post("/leader/opportunity/icon", requireLeaderSession, handleIconUpload, async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    res.status(400).json({ error: "validation_error", details: ["icon file is required"] });
+    return;
+  }
+  if (!ALLOWED_ICON_MIME_TYPES.includes(file.mimetype)) {
+    res.status(400).json({
+      error: "validation_error",
+      details: [`icon must be one of: ${ALLOWED_ICON_MIME_TYPES.join(", ")}`],
+    });
+    return;
+  }
+
+  const url = await uploadLeaderIcon(req.leaderOpportunityId!, file.buffer, file.mimetype);
+  res.status(201).json({ result: { iconUrl: url } });
 });

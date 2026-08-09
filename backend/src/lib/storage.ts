@@ -46,20 +46,10 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 export const ALLOWED_ICON_MIME_TYPES = Object.keys(EXTENSION_BY_MIME);
 export const MAX_ICON_UPLOAD_BYTES = 2 * 1024 * 1024; // 2 MiB
 
-/**
- * Uploads a submitted icon under a namespaced pending path
- * (`icons/pending/{opportunityId}/{uuid}.{ext}`) and returns its public URL.
- * Caller (the route) MUST validate `mimeType` against ALLOWED_ICON_MIME_TYPES
- * and `buffer.length` against MAX_ICON_UPLOAD_BYTES before calling this — no
- * validation happens here.
- */
-export async function uploadIcon(opportunityId: number, buffer: Buffer, mimeType: string): Promise<string> {
+async function put(key: string, buffer: Buffer, mimeType: string): Promise<string> {
   if (!BUCKET_NAME || !PUBLIC_URL) {
     throw new Error("R2 is not configured — set R2_BUCKET_NAME and R2_PUBLIC_URL (see .env.example).");
   }
-  const ext = EXTENSION_BY_MIME[mimeType];
-  const key = `icons/pending/${opportunityId}/${randomUUID()}.${ext}`;
-
   await getClient().send(
     new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -68,6 +58,30 @@ export async function uploadIcon(opportunityId: number, buffer: Buffer, mimeType
       ContentType: mimeType,
     })
   );
-
   return `${PUBLIC_URL.replace(/\/$/, "")}/${key}`;
+}
+
+/**
+ * Uploads a submitted icon under a namespaced pending path
+ * (`icons/pending/{opportunityId}/{uuid}.{ext}`) and returns its public URL.
+ * Caller (the route) MUST validate `mimeType` against ALLOWED_ICON_MIME_TYPES
+ * and `buffer.length` against MAX_ICON_UPLOAD_BYTES before calling this — no
+ * validation happens here.
+ */
+export async function uploadIcon(opportunityId: number, buffer: Buffer, mimeType: string): Promise<string> {
+  const ext = EXTENSION_BY_MIME[mimeType];
+  return put(`icons/pending/${opportunityId}/${randomUUID()}.${ext}`, buffer, mimeType);
+}
+
+/**
+ * Same upload, different bucket path (`icons/leader/...` instead of
+ * `icons/pending/...`) — used by the club/VIP leader edit page
+ * (routes/leader.ts), where a logged-in leader has direct-write access to
+ * their own listing and this never goes through admin review, unlike the
+ * public uploadIcon() path above. Same validation contract: caller must
+ * check mimeType/size before calling.
+ */
+export async function uploadLeaderIcon(opportunityId: number, buffer: Buffer, mimeType: string): Promise<string> {
+  const ext = EXTENSION_BY_MIME[mimeType];
+  return put(`icons/leader/${opportunityId}/${randomUUID()}.${ext}`, buffer, mimeType);
 }

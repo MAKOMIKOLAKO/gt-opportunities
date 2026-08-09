@@ -28,6 +28,8 @@ const state = {
   opportunity: null, // { id, name, description, link, iconUrl, tagSlugs, links }
   loginRequestStatus: "", // "", "sending", "sent", "recovered"
   loginRequestError: "",
+  iconUploading: false,
+  iconUploadError: "",
 };
 
 function setState(patch) {
@@ -101,6 +103,44 @@ function collectLinkRows(form) {
       type: row.querySelector(".link-row-type").value,
     }))
     .filter((r) => r.label && r.url);
+}
+
+// ---- Icon upload ----
+// Real file upload (multipart/form-data), not a leader-typed URL fetched
+// server-side — see routes/leader.ts's POST /leader/opportunity/icon for
+// why (same SSRF reasoning as the public icon-submission path). Uses a raw
+// fetch(), not apiFetch(): apiFetch() always sends Content-Type:
+// application/json, which would break multer's multipart parsing on the
+// backend. Only fills the URL field client-side — the upload itself never
+// touches the live listing; the existing Save button (handleSave below)
+// is what actually persists iconUrl, same single write path as every
+// other field on this form.
+async function handleIconFileChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  setState({ iconUploading: true, iconUploadError: "" });
+
+  const formData = new FormData();
+  formData.append("icon", file);
+  try {
+    const res = await fetch(`${API_BASE}/leader/opportunity/icon`, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      setState({ iconUploading: false, sessionExpired: true, opportunity: null });
+      return;
+    }
+    if (!res.ok) {
+      throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+    }
+    state.opportunity = { ...state.opportunity, iconUrl: data.result.iconUrl };
+    setState({ iconUploading: false, iconUploadError: "" });
+  } catch (err) {
+    setState({ iconUploading: false, iconUploadError: err.message });
+  }
 }
 
 async function handleSave(e) {
@@ -245,8 +285,19 @@ function renderForm() {
           <input id="editLink" type="url" placeholder="https://..." autocomplete="off" value="${escapeAttr(o.link || "")}" />
         </div>
         <div>
-          <label for="editIconUrl">Icon URL</label>
-          <input id="editIconUrl" type="url" placeholder="https://..." autocomplete="off" value="${escapeAttr(o.iconUrl || "")}" />
+          <label for="editIconUrl">Icon</label>
+          <div class="icon-upload-row">
+            ${o.iconUrl ? `<img class="icon-upload-preview" src="${escapeAttr(o.iconUrl)}" alt="" onerror="this.hidden=true" />` : ""}
+            <div class="icon-upload-controls">
+              <input id="editIconUrl" type="url" placeholder="https://..." autocomplete="off" value="${escapeAttr(o.iconUrl || "")}" />
+              <label class="icon-upload-btn ${state.iconUploading ? "disabled" : ""}">
+                ${state.iconUploading ? "Uploading&hellip;" : "Upload image"}
+                <input type="file" id="editIconFile" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" ${state.iconUploading ? "disabled" : ""} hidden />
+              </label>
+            </div>
+          </div>
+          <div class="submit-links-hint">PNG, JPG, GIF, WEBP, or SVG — max 2MB. Uploading fills the field above; it doesn't go live until you hit Save changes below, same as every other field here. Pasting a URL directly still works too.</div>
+          ${state.iconUploadError ? `<div class="form-error">${escapeHtml(state.iconUploadError)}</div>` : ""}
         </div>
         <div class="submit-links-block">
           <div class="submit-links-head">
@@ -282,6 +333,8 @@ function render() {
   app.innerHTML = renderForm();
   const form = el("#editForm");
   form.addEventListener("submit", handleSave);
+  const iconFileInput = el("#editIconFile");
+  if (iconFileInput) iconFileInput.addEventListener("change", handleIconFileChange);
   form.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-action]");
     if (!btn) return;

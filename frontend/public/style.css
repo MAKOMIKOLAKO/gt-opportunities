@@ -715,6 +715,31 @@ main {
 .submit-links-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .submit-links-head label { margin-bottom: 0; }
 .submit-links-hint { font-weight: 400; color: var(--gray-matter); text-transform: none; letter-spacing: normal; }
+
+/* ---------- Icon upload (leader edit page — leader-edit.js) ---------- */
+
+.icon-upload-row { display: flex; align-items: center; gap: 12px; }
+.icon-upload-preview {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1.5px solid var(--pi-mile);
+  flex-shrink: 0;
+}
+.icon-upload-controls { display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 0; }
+.icon-upload-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1.5px solid var(--navy);
+  color: var(--navy);
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.icon-upload-btn.disabled { opacity: 0.6; cursor: default; border-color: var(--pi-mile); color: var(--gray-matter); }
 .add-link-row-btn {
   background: none;
   border: 1.5px solid var(--navy);
