@@ -1330,6 +1330,34 @@ export async function markMagicLinkUsed(id: number): Promise<MagicLinkDTO | null
   return toMagicLinkDTO(updated[0]);
 }
 
+/**
+ * Atomically looks up AND consumes a magic_links row by token hash in one
+ * statement (module 2 of 7 — leader-access session handling): the
+ * `UPDATE ... WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()
+ * RETURNING` shape means two concurrent requests racing to redeem the same
+ * raw token can never both succeed — only one UPDATE can ever match a row
+ * still satisfying `used_at IS NULL`, so single-use is enforced by Postgres
+ * itself rather than by a separate SELECT-then-UPDATE the app has to keep
+ * race-free. Returns null for EVERY failure case (not found, already used,
+ * expired) so callers get no signal distinguishing them — callers that want
+ * a reason for server-side logging only should fall back to
+ * getMagicLinkByTokenHash() themselves.
+ */
+export async function consumeMagicLinkAtomic(tokenHash: string): Promise<MagicLinkDTO | null> {
+  const rows = await db
+    .update(magicLinks)
+    .set({ usedAt: sql`now()` })
+    .where(
+      and(
+        eq(magicLinks.tokenHash, tokenHash),
+        sql`${magicLinks.usedAt} IS NULL`,
+        sql`${magicLinks.expiresAt} > now()`
+      )
+    )
+    .returning();
+  return rows.length ? toMagicLinkDTO(rows[0]) : null;
+}
+
 export interface SessionDTO {
   id: number;
   opportunityId: number;

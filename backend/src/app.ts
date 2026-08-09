@@ -18,6 +18,7 @@ import { publicRouter } from "./routes/public.js";
 import { submitRouter } from "./routes/submit.js";
 import { adminRouter } from "./routes/admin.js";
 import { seoRouter } from "./routes/seo.js";
+import { leaderRouter } from "./routes/leader.js";
 
 export const app = express();
 
@@ -37,6 +38,7 @@ app.use("/", seoRouter);
 app.use("/api", publicRouter);
 app.use("/api", submitRouter);
 app.use("/api", adminRouter);
+app.use("/api", leaderRouter);
 
 // Must be registered last and take 4 args (err, req, res, next) — that
 // signature is how Express identifies error-handling middleware.
