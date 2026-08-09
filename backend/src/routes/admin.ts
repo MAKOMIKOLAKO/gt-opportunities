@@ -4,6 +4,7 @@ import { Router } from "express";
 import { ADMIN_USERNAME, ADMIN_PASSWORD, createToken, requireAdmin } from "../lib/auth.js";
 import {
   getForAdmin,
+  getByIdForAdmin,
   approveOpportunity,
   rejectOpportunity,
   updateOpportunity,
@@ -23,6 +24,7 @@ import {
   rejectSuggestedEdit,
   getAccessRequestsForAdmin,
   getAccessRequest,
+  listAccessRequestsForOpportunity,
   updateAccessRequestStatus,
   getActiveAccessForOpportunity,
   createMagicLink,
@@ -35,6 +37,7 @@ import {
 } from "../db/data-access.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { isValidSlugFormat } from "../lib/slug.js";
+import { sendMagicLinkEmail, looksLikeEmail } from "../lib/email.js";
 import type {
   OpportunityStatus,
   OpportunityType,
@@ -54,21 +57,25 @@ const VALID_SUGGESTED_EDIT_STATUSES: SuggestedEditStatus[] = ["pending", "approv
 const VALID_ACCESS_REQUEST_STATUSES: AccessRequestStatus[] = ["pending", "approved", "denied"];
 
 // Claim links minted from the admin approve/resend flows below live for 72
-// hours — long enough for the admin to copy the link out of the JSON
-// response and hand it to the org over whatever channel they use (email,
-// Slack, in person), given this repo has no outbound email/SMS delivery
-// infra (checked: no nodemailer/sendgrid/twilio dependency in
-// backend/package.json) — same reasoning leader.ts's login-request route
-// documents for why it returns the raw token directly instead of "sending"
-// it.
+// hours. Actually emailed now (see lib/email.ts) when the requester's
+// contact is email-shaped and RESEND_API_KEY is configured — still also
+// returned in the JSON response either way, both as a fallback for
+// phone-only contacts (no SMS delivery infra) or an unconfigured Resend key,
+// and so the admin panel can show/copy it regardless.
 const CLAIM_LINK_TTL_MS = 72 * 60 * 60 * 1000;
 
-function buildClaimLinkPath(rawToken: string): string {
-  // Same relative-path convention leader.ts's login-request route uses —
-  // no leader-facing frontend route exists yet to turn this into an
-  // absolute URL, so this is a convention the admin UI prefixes with
-  // window.location.origin, not a live link on its own.
-  return `/leader/verify?token=${rawToken}`;
+// /org/:slug/manage (routes/seo.ts) is the real, live claim/login landing
+// page — leader-edit.js reads `?token=` off this exact URL on load and
+// consumes it via POST /api/leader/verify before falling back to its normal
+// session-cookie-driven view. See BUILD_NOTES_ORG_SUBPAGES.md.
+function buildClaimLinkPath(orgSlug: string, rawToken: string): string {
+  return `/org/${orgSlug}/manage?token=${rawToken}`;
+}
+
+function siteOrigin(req: { protocol: string; get(name: string): string | undefined }): string {
+  const forwardedProto = req.get("x-forwarded-proto");
+  const proto = forwardedProto ? forwardedProto.split(",")[0].trim() : req.protocol;
+  return `${proto}://${req.get("host")}`;
 }
 
 export const adminRouter = Router();
@@ -464,6 +471,19 @@ adminRouter.post("/admin/access-requests/:id/approve", async (req, res) => {
     expiresAt,
   });
 
+  const org = await getByIdForAdmin(existing.opportunityId);
+  const claimLinkPath = org ? buildClaimLinkPath(org.slug, rawToken) : null;
+  let emailSent = false;
+  if (org && claimLinkPath && looksLikeEmail(existing.requesterContact)) {
+    const { sent } = await sendMagicLinkEmail({
+      to: existing.requesterContact,
+      orgName: org.name,
+      purpose: "claim",
+      url: `${siteOrigin(req)}${claimLinkPath}`,
+    });
+    emailSent = sent;
+  }
+
   // audit_log action string settled on: "approve_request" — deliberately
   // distinct from "grant_access" (which leader.ts's /leader/verify writes
   // the moment an org actually redeems a claim link and opportunity_access
@@ -479,16 +499,15 @@ adminRouter.post("/admin/access-requests/:id/approve", async (req, res) => {
     action: "approve_request",
   });
 
-  // Raw token returned exactly once, in this response body — never
-  // persisted (only its hash is), never emailed/texted (no outbound
-  // delivery infra in this repo — checked backend/package.json for
-  // nodemailer/sendgrid/twilio, none present), so the admin must manually
-  // copy `claimLink`/`claimToken` out of this response and send it to the
-  // org via requesterContact shown in the queue.
+  // Raw token also returned in this response body (never persisted — only
+  // its hash is) as a fallback: for phone-only contacts (no SMS infra) or
+  // when RESEND_API_KEY isn't configured, the admin still needs to copy
+  // `claimLinkPath` out of here and deliver it manually.
   res.json({
     result: updated,
     claimToken: rawToken,
-    claimLinkPath: buildClaimLinkPath(rawToken),
+    claimLinkPath,
+    emailSent,
     expiresAt,
   });
 });
@@ -566,6 +585,27 @@ adminRouter.post("/admin/opportunities/:opportunityId/resend-claim-link", async 
     expiresAt,
   });
 
+  // No access_requests row is guaranteed to exist on this path (see the
+  // module comment above — this endpoint exists precisely for when there
+  // isn't one), so the "known contact" lookup mirrors leader.ts's
+  // login-request self-service route: most-recent APPROVED request's
+  // requesterContact, best-effort. If there isn't one, this just falls back
+  // to the claimLinkPath-in-response path (admin delivers it manually).
+  const org = await getByIdForAdmin(opportunityId);
+  const claimLinkPath = org ? buildClaimLinkPath(org.slug, rawToken) : null;
+  const approvedRequests = await listAccessRequestsForOpportunity(opportunityId, { status: "approved" });
+  const knownContact = approvedRequests[0]?.requesterContact;
+  let emailSent = false;
+  if (org && claimLinkPath && knownContact && looksLikeEmail(knownContact)) {
+    const { sent } = await sendMagicLinkEmail({
+      to: knownContact,
+      orgName: org.name,
+      purpose: "claim",
+      url: `${siteOrigin(req)}${claimLinkPath}`,
+    });
+    emailSent = sent;
+  }
+
   const reviewedBy = (req as typeof req & { adminUser?: string }).adminUser ?? ADMIN_USERNAME;
   await appendAuditLog({
     opportunityId,
@@ -576,7 +616,8 @@ adminRouter.post("/admin/opportunities/:opportunityId/resend-claim-link", async 
   res.json({
     result: { opportunityId },
     claimToken: rawToken,
-    claimLinkPath: buildClaimLinkPath(rawToken),
+    claimLinkPath,
+    emailSent,
     expiresAt,
   });
 });

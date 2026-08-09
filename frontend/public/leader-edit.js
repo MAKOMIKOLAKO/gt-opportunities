@@ -1,18 +1,19 @@
-// Leader self-service edit page (module 5 of 7). Assumes the
-// `leader_session` httpOnly cookie is already set (issued by
-// POST /api/leader/verify — module 2 — after the leader clicks a claim or
-// login magic link; that route does not currently redirect anywhere, so
-// whatever wires the magic-link email/click flow should send the leader to
-// this page, e.g. /leader-edit.html, once verify succeeds — see
-// backend/src/routes/leader.ts).
+// Leader self-service edit page (module 5 of 7). Served two ways: the
+// legacy static /leader-edit.html, and /org/:slug/manage (the SSR wrapper
+// in backend/src/routes/seo.ts) — both load this exact same script.
 //
-// No admin-style login form lives here. If the initial GET 401s (no/expired
-// session), this page falls back to a minimal "request a new login link"
-// form that posts to /api/leader/login-request (module 2) and, since this
-// repo has no outbound email/SMS infra yet (see that route's comments),
-// immediately consumes the returned token itself via POST /api/leader/verify
-// to set a fresh session cookie and reload — a stand-in for "click the link
-// in your email" until real delivery exists.
+// Two ways in:
+//   1. Already has a `leader_session` httpOnly cookie (issued by a previous
+//      POST /api/leader/verify) — straight to loadOpportunity().
+//   2. Landed here via an emailed claim/login link (lib/email.ts), which
+//      points at this exact page with `?token=...` appended — consumeUrlToken()
+//      below POSTs it to /api/leader/verify to set that session cookie
+//      before anything else runs, then strips it from the URL bar so a
+//      reload/bookmark doesn't replay a single-use token.
+//
+// No admin-style login form lives here. If loadOpportunity() 401s (no/
+// expired session and no valid ?token=), this page falls back to a minimal
+// "request a new login link" form that posts to /api/leader/login-request.
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
@@ -290,4 +291,26 @@ function render() {
   });
 }
 
-loadOpportunity();
+// ---- Boot: consume a ?token= from an emailed claim/login link, if present ----
+async function consumeUrlTokenThenLoad() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+  if (token) {
+    const { res } = await apiFetch("/leader/verify", { method: "POST", body: JSON.stringify({ token }) });
+    // Strip the token from the URL either way — single-use, so leaving it
+    // there would replay a dead token on every reload/bookmark and is one
+    // more copy of a credential sitting around in browser history for no
+    // reason.
+    params.delete("token");
+    const clean = window.location.pathname + (params.toString() ? `?${params}` : "");
+    window.history.replaceState({}, "", clean);
+    if (!res.ok) {
+      // Invalid/expired/already-used token: fall through to the normal
+      // session check below, which will 401 and show the recovery form.
+      console.warn("[leader-edit] claim/login link could not be verified:", res.status);
+    }
+  }
+  loadOpportunity();
+}
+
+consumeUrlTokenThenLoad();

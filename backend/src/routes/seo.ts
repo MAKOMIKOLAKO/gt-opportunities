@@ -326,14 +326,22 @@ ${bodyHtml}
 //     logged into two orgs in different tabs), refuse with 403 instead of
 //     silently rendering their own (wrong) org's editor under this URL —
 //     requireLeaderSession alone can't catch this since it has no idea what
-//     URL it's protecting (see its own comment in routes/leader.ts).
+//     URL it's protecting (see its own comment in routes/leader.ts). Skipped
+//     entirely when the request carries `?token=` (an emailed claim/login
+//     link — lib/email.ts): that token is what leader-edit.js's
+//     consumeUrlTokenThenLoad() is about to POST to /api/leader/verify,
+//     which will overwrite any stale different-org cookie with a fresh
+//     session for *this* org — the mismatch guard would otherwise block a
+//     legitimate new-org invite from ever completing for someone already
+//     logged into a different org.
 seoRouter.get("/org/:slug/manage", async (req, res) => {
   res.set("Cache-Control", "no-store");
   const slug = req.params.slug.toLowerCase();
   const result = await getPublicBySlug(slug);
 
   if (result.kind === "redirect") {
-    res.redirect(301, `/org/${result.newSlug}/manage`);
+    const qs = req.originalUrl.includes("?") ? `?${req.originalUrl.split("?")[1]}` : "";
+    res.redirect(301, `/org/${result.newSlug}/manage${qs}`);
     return;
   }
   if (result.kind === "not_found") {
@@ -346,7 +354,7 @@ seoRouter.get("/org/:slug/manage", async (req, res) => {
   }
 
   const cookies = parseCookies(req.header("cookie"));
-  const raw = cookies[SESSION_COOKIE_NAME];
+  const raw = typeof req.query.token === "string" ? undefined : cookies[SESSION_COOKIE_NAME];
   if (raw) {
     const session = await getSessionByTokenHash(hashToken(raw));
     const valid = !!session && !session.revokedAt && new Date(session.expiresAt).getTime() > Date.now();

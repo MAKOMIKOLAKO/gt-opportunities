@@ -32,6 +32,13 @@ import { LINK_TYPES } from "../db/schema.js";
 import type { LinkType } from "../db/schema.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { createRateLimiter } from "../lib/rate-limit.js";
+import { sendMagicLinkEmail, looksLikeEmail } from "../lib/email.js";
+
+function siteOrigin(req: { protocol: string; get(name: string): string | undefined }): string {
+  const forwardedProto = req.get("x-forwarded-proto");
+  const proto = forwardedProto ? forwardedProto.split(",")[0].trim() : req.protocol;
+  return `${proto}://${req.get("host")}`;
+}
 
 export const leaderRouter = Router();
 
@@ -301,21 +308,35 @@ leaderRouter.post("/leader/login-request", loginRequestLimiter, async (req, res)
     expiresAt,
   });
 
-  // No outbound email/SMS infra exists in this repo (checked: no
-  // nodemailer/sendgrid/twilio/etc. dependency) — mirrors module 1's sibling
-  // "admin sends manually" approach by returning the raw token/link directly
-  // in the response body instead. This is safe ONLY because we already
-  // confirmed `matches` above; an unmatched request never reaches this
-  // branch, so this response body never leaks a usable token to someone who
-  // doesn't already know the org's contact on file.
+  // Actually emailed now (lib/email.ts) when RESEND_API_KEY is configured —
+  // still ALSO returned in the response body below either way, both as a
+  // fallback for an unconfigured Resend key and because this repo's leader
+  // edit page (leader-edit.js) auto-consumes the token itself immediately as
+  // a stand-in for "click the link in your email" (see that file's
+  // comments). This is safe ONLY because we already confirmed `matches`
+  // above; an unmatched request never reaches this branch, so this response
+  // body never leaks a usable token to someone who doesn't already know the
+  // org's contact on file.
+  const orgs = await getPublic();
+  const org = orgs.find((o) => o.id === opportunityId);
+  const path = org ? `/org/${org.slug}/manage?token=${rawToken}` : `/leader/verify?token=${rawToken}`;
+  if (org && looksLikeEmail(contact)) {
+    await sendMagicLinkEmail({
+      to: contact,
+      orgName: org.name,
+      purpose: "login",
+      url: `${siteOrigin(req)}${path}`,
+    });
+  }
+
   res.json({
     result: {
       status: "issued",
       token: rawToken,
-      // Relative path a future leader-facing frontend (module 5) can turn
-      // into a full link; no such frontend route exists yet, so this is
-      // just a convention, not a live URL.
-      path: `/leader/verify?token=${rawToken}`,
+      // Real, live URL now (/org/:slug/manage — leader-edit.js consumes
+      // `?token=` off it directly on load; see routes/seo.ts and
+      // BUILD_NOTES_ORG_SUBPAGES.md).
+      path,
       expiresAt,
     },
   });
