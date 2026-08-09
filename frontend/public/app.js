@@ -256,8 +256,8 @@ function renderDirectory() {
     <main class="view-directory">
       <div class="dir-heading">
         <div class="dir-eyebrow">Georgia Institute of Technology</div>
-        <h1>Find your next project</h1>
-        <p>Search VIP teams, research labs, and technical student organizations in one place — no more digging through CampusGroups.</p>
+        <h1>Every technical opportunity at GT, searchable</h1>
+        <p>VIP teams, research labs, and student orgs.</p>
       </div>
 
       <div class="dir-toolbar">
