@@ -105,7 +105,7 @@
 .admin-shell { min-height: 100vh; display: flex; flex-direction: column; }
 
 /* Section nav — top-level tabs between the entire admin surfaces
-   (Opportunities / Reviews / Reports / ...). Distinct from .admin-tab
+   (Opportunities / Links / Icons / ...). Distinct from .admin-tab
    below, which is the pending/approved/rejected status filter WITHIN the
    Opportunities section only. */
 .admin-section-nav {
@@ -272,8 +272,8 @@
   font-size: 13px;
 }
 
-/* ---------- Guidance banner (reviews / reports / links / icons /
-   suggested edits / access requests / audit log — one per section) ---------- */
+/* ---------- Guidance banner (links / icons / suggested edits /
+   access requests / audit log — one per section) ---------- */
 
 .admin-guidance {
   background: var(--diploma);
@@ -286,8 +286,8 @@
   line-height: 1.5;
 }
 
-/* ---------- Field label/value row (used inside .admin-row for reviews,
-   reports, links, access requests) ---------- */
+/* ---------- Field label/value row (used inside .admin-row for links,
+   icons, suggested edits, access requests) ---------- */
 
 .admin-field-row { display: flex; gap: 10px; font-size: 13px; padding: 4px 0; }
 .admin-field-row-label { flex: 0 0 160px; font-weight: 600; color: var(--gray-matter); }

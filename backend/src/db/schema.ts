@@ -10,7 +10,7 @@
 //     (json-columns.ts) if ever needed.
 //   - `created_at` / `updated_at` / `reviewed_at` / etc. are Postgres
 //     `timestamp` columns using drizzle's `{ mode: "string" }`, so the
-//     app-level contract (ISO strings in `OpportunityDTO`/`ReviewDTO`) is
+//     app-level contract (ISO strings in `OpportunityDTO`) is
 //     unchanged from the SQLite version — only the storage type changed.
 //   - `search_blob` (plain text, app-maintained) is kept as the
 //     human-debuggable denormalized blob; `search_vector` is a new
@@ -149,28 +149,6 @@ export const opportunityTags = pgTable(
   })
 );
 
-// ---- Reviews (Addition 3) ----
-// Anonymous, structured, text-only reviews of an opportunity. Deliberately
-// NO numeric rating field — see BUILD_NOTES.md for why that's a considered
-// omission, not an oversight. Uses a text/uuid PK (crypto.randomUUID()) per
-// spec, which deviates from the integer-PK convention used elsewhere.
-export const REVIEW_STATUSES = ["pending", "approved", "rejected"] as const;
-export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
-
-export const reviews = pgTable("reviews", {
-  id: text("id").primaryKey(),
-  opportunityId: integer("opportunity_id")
-    .notNull()
-    .references(() => opportunities.id, { onDelete: "cascade" }),
-  timeCommitment: text("time_commitment").notNull(),
-  beforeApplying: text("before_applying").notNull(),
-  adviceNewMember: text("advice_new_member").notNull(),
-  status: text("status").$type<ReviewStatus>().notNull().default("pending"),
-  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
-  reviewedBy: text("reviewed_by"),
-  reviewedAt: timestamp("reviewed_at", { mode: "string" }),
-});
-
 // ---- Suggested edits (Addition: suggest edits on existing listings) ----
 // Public, anonymous-friendly "propose a correction" flow for a single field
 // on an existing opportunity, reviewed by an admin before it touches the
@@ -203,31 +181,6 @@ export const suggestedEdits = pgTable("suggested_edits", {
   reviewedAt: timestamp("reviewed_at", { mode: "string" }),
 });
 
-// ---- Reports (Addition 3) ----
-// NOTE: a `reports` table is also being prototyped, independently and not
-// yet merged, on `worktree-reports-and-vip-search`. This copy was created
-// here because the review-dispute flow needed it wired now. Shape matches
-// that branch's prototype as closely as possible (plus a nullable
-// `review_id` column this feature needs) to ease future reconciliation —
-// see BUILD_NOTES.md.
-export const REPORT_CATEGORIES = ["outdated_info", "broken_link", "wrong_contact", "other"] as const;
-export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
-export const REPORT_STATUSES = ["open", "resolved"] as const;
-export type ReportStatus = (typeof REPORT_STATUSES)[number];
-
-export const reports = pgTable("reports", {
-  id: serial("id").primaryKey(),
-  opportunityId: integer("opportunity_id").references(() => opportunities.id, { onDelete: "cascade" }),
-  reviewId: text("review_id").references(() => reviews.id, { onDelete: "cascade" }),
-  category: text("category").$type<ReportCategory>().notNull(),
-  details: text("details").notNull().default(""),
-  reporterContact: text("reporter_contact"), // optional, no login required
-  status: text("status").$type<ReportStatus>().notNull().default("open"),
-  createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
-  resolvedBy: text("resolved_by"),
-  resolvedAt: timestamp("resolved_at", { mode: "string" }),
-});
-
 // ---- Links (Additional org links beyond "how to apply") ----
 // `opportunities.link` remains the single primary "how to apply" link. This
 // table holds ADDITIONAL links per opportunity (apply-adjacent, homepage,
@@ -236,9 +189,9 @@ export const reports = pgTable("reports", {
 // with app-level enum validation (not a Postgres native enum type),
 // deliberately extensible later — matches how the rest of this schema
 // handles small closed vocabularies (see OPPORTUNITY_TYPES). Follows the
-// same pending -> admin-review -> approved lifecycle as reviews/reports;
-// LINK_STATUSES intentionally mirrors REVIEW_STATUSES's shape rather than
-// importing it, since links are their own domain.
+// same pending -> admin-review -> approved lifecycle as suggestedEdits;
+// LINK_STATUSES intentionally mirrors SUGGESTED_EDIT_STATUSES's shape
+// rather than importing it, since links are their own domain.
 export const LINK_TYPES = ["apply", "homepage", "social", "other"] as const;
 export type LinkType = (typeof LINK_TYPES)[number];
 
