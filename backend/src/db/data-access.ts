@@ -1499,9 +1499,19 @@ export interface AuditLogInput {
   newValue?: string | null;
 }
 
-/** Append-only: inserts one audit_log row. Never updates/deletes existing rows. */
-export async function appendAuditLog(input: AuditLogInput): Promise<AuditLogDTO> {
-  const [row] = await db
+/**
+ * Append-only: inserts one audit_log row. Never updates/deletes existing
+ * rows. Optional second `executor` param (a `db.transaction(async (tx) =>
+ * ...)` callback's `tx`) lets a caller include the insert in an existing
+ * transaction — e.g. updateLeaderOpportunity() below writes the opportunity
+ * row and its audit_log rows atomically. Defaults to the module-level `db`
+ * for every existing (non-transactional) call site.
+ */
+export async function appendAuditLog(
+  input: AuditLogInput,
+  executor: Pick<typeof db, "insert"> = db
+): Promise<AuditLogDTO> {
+  const [row] = await executor
     .insert(auditLog)
     .values({
       opportunityId: input.opportunityId,
@@ -1529,4 +1539,194 @@ export async function listAuditLogForOpportunity(
     .where(and(...conditions))
     .orderBy(desc(auditLog.createdAt));
   return rows.map(toAuditLogDTO);
+}
+
+// ---- Leader self-service edit (Module 5 of 7) ----
+// A logged-in org (see requireLeaderSession in routes/leader.ts) may edit a
+// narrow set of fields on its OWN opportunity row, live — no admin
+// pending/review step. The field set intentionally mirrors, as closely as
+// this feature's shape allows, the fields non-admins are already trusted to
+// set elsewhere in this codebase:
+//   - description  -> same field/type as SUGGESTABLE_FIELDS ("description")
+//   - tags         -> opportunity_tags, same tagSlugs replace-all shape the
+//                     admin PATCH /admin/opportunities/:id route uses
+//   - link         -> opportunities.link, the single primary "how to apply"
+//                     link (schema.ts calls this out by name); same field
+//                     SUGGESTABLE_FIELDS exposes as "link"
+//   - iconUrl      -> same column public icon submission
+//                     (submitIconPending) targets, EXCEPT a leader edit
+//                     writes iconUrl directly (live) instead of
+//                     iconPendingUrl (admin-gated) — see task spec: leader
+//                     edits are live immediately, by design, unlike the
+//                     anonymous public icon-submission path.
+//   - links        -> the separate `links` table (additional apply-adjacent/
+//                     homepage/social links beyond the primary `link`
+//                     above), full-replace, same shape
+//                     insertLinkSubmission() accepts. Leader-authored rows
+//                     are inserted as status='approved' directly (live),
+//                     again unlike the public path (insertLinkSubmission,
+//                     which is always 'pending').
+// Explicitly NOT editable here: name/type/majors/meta/details/status/source
+// — those stay admin-only (updateOpportunity) or out of scope entirely.
+export interface LeaderEditableOpportunity {
+  id: number;
+  name: string;
+  description: string;
+  link: string | null;
+  iconUrl: string | null;
+  tagSlugs: string[];
+  links: { id: number; label: string; url: string; type: LinkType }[];
+}
+
+/** Session-scoped read: the current leader-editable snapshot of one opportunity. Null if the opportunity somehow no longer exists (e.g. deleted after the session was issued). */
+export async function getLeaderEditableOpportunity(opportunityId: number): Promise<LeaderEditableOpportunity | null> {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.id, opportunityId));
+  if (rows.length === 0) return null;
+  const row = rows[0];
+
+  const tagRows = await db
+    .select({ slug: tags.slug })
+    .from(opportunityTags)
+    .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+    .where(eq(opportunityTags.opportunityId, opportunityId));
+
+  const linkRows = await db
+    .select({ id: links.id, label: links.label, url: links.url, type: links.type })
+    .from(links)
+    .where(eq(links.opportunityId, opportunityId))
+    .orderBy(links.createdAt);
+
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    link: row.link,
+    iconUrl: row.iconUrl,
+    tagSlugs: tagRows.map((t) => t.slug),
+    links: linkRows,
+  };
+}
+
+export interface LeaderEditFields {
+  description?: string;
+  link?: string | null;
+  iconUrl?: string | null;
+  tagSlugs?: string[];
+  links?: { label: string; url: string; type: LinkType }[];
+}
+
+// Stable serialization for diffing/audit-logging non-scalar fields
+// (tagSlugs / links) as a single before/after string pair.
+function serializeTagSlugs(slugs: string[]): string {
+  return JSON.stringify([...slugs].sort());
+}
+function serializeLinks(rows: { label: string; url: string; type: LinkType }[]): string {
+  return JSON.stringify(
+    [...rows]
+      .map((r) => ({ label: r.label, url: r.url, type: r.type }))
+      .sort((a, b) => (a.label + a.url).localeCompare(b.label + b.url))
+  );
+}
+
+/**
+ * Session-scoped write: applies a partial update of ONLY the
+ * leader-editable fields to the live opportunities row (plus its tags/links
+ * side tables), and writes one audit_log row per field that actually
+ * changed (old !== new), in a single transaction. `opportunityId` MUST come
+ * from `req.leaderOpportunityId` (the session), never from request
+ * body/params — see routes/leader.ts. Returns null if the opportunity no
+ * longer exists.
+ */
+export async function updateLeaderOpportunity(
+  opportunityId: number,
+  fields: LeaderEditFields
+): Promise<LeaderEditableOpportunity | null> {
+  const before = await getLeaderEditableOpportunity(opportunityId);
+  if (!before) return null;
+
+  const actor = String(opportunityId);
+  const auditEntries: { fieldChanged: string; oldValue: string | null; newValue: string | null }[] = [];
+
+  const patch: Record<string, unknown> = {};
+  if (fields.description !== undefined && fields.description !== before.description) {
+    patch.description = fields.description;
+    auditEntries.push({ fieldChanged: "description", oldValue: before.description, newValue: fields.description });
+  }
+  if (fields.link !== undefined && fields.link !== before.link) {
+    patch.link = fields.link;
+    auditEntries.push({ fieldChanged: "link", oldValue: before.link, newValue: fields.link });
+  }
+  if (fields.iconUrl !== undefined && fields.iconUrl !== before.iconUrl) {
+    patch.iconUrl = fields.iconUrl;
+    auditEntries.push({ fieldChanged: "iconUrl", oldValue: before.iconUrl, newValue: fields.iconUrl });
+  }
+
+  const tagsChanged =
+    fields.tagSlugs !== undefined && serializeTagSlugs(fields.tagSlugs) !== serializeTagSlugs(before.tagSlugs);
+  if (tagsChanged) {
+    auditEntries.push({
+      fieldChanged: "tags",
+      oldValue: serializeTagSlugs(before.tagSlugs),
+      newValue: serializeTagSlugs(fields.tagSlugs!),
+    });
+  }
+
+  const linksChanged =
+    fields.links !== undefined && serializeLinks(fields.links) !== serializeLinks(before.links);
+  if (linksChanged) {
+    auditEntries.push({
+      fieldChanged: "links",
+      oldValue: serializeLinks(before.links),
+      newValue: serializeLinks(fields.links!),
+    });
+  }
+
+  if (Object.keys(patch).length > 0) patch.updatedAt = sql`now()`;
+
+  await db.transaction(async (tx) => {
+    if (Object.keys(patch).length > 0) {
+      await tx.update(opportunities).set(patch).where(eq(opportunities.id, opportunityId));
+    }
+    if (tagsChanged) {
+      await tx.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId));
+      const idRows = fields.tagSlugs!.length
+        ? await tx.select({ id: tags.id }).from(tags).where(inArray(tags.slug, fields.tagSlugs!))
+        : [];
+      for (const tagRow of idRows) {
+        await tx.insert(opportunityTags).values({ opportunityId, tagId: tagRow.id });
+      }
+    }
+    if (linksChanged) {
+      await tx.delete(links).where(eq(links.opportunityId, opportunityId));
+      for (const l of fields.links!) {
+        await tx.insert(links).values({
+          opportunityId,
+          label: l.label,
+          url: l.url,
+          type: l.type,
+          status: "approved" as const,
+        });
+      }
+    }
+    for (const entry of auditEntries) {
+      await appendAuditLog(
+        {
+          opportunityId,
+          actor,
+          action: "edit_field",
+          fieldChanged: entry.fieldChanged,
+          oldValue: entry.oldValue,
+          newValue: entry.newValue,
+        },
+        tx
+      );
+    }
+  });
+
+  if (patch.description !== undefined || tagsChanged) {
+    await refreshSearchBlob(opportunityId);
+    await reembedAndRecompute(opportunityId);
+  }
+
+  return getLeaderEditableOpportunity(opportunityId);
 }
