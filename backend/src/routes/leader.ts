@@ -23,7 +23,11 @@ import {
   getSessionByTokenHash,
   appendAuditLog,
   listAccessRequestsForOpportunity,
+  getLeaderEditableOpportunity,
+  updateLeaderOpportunity,
 } from "../db/data-access.js";
+import { LINK_TYPES } from "../db/schema.js";
+import type { LinkType } from "../db/schema.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { createRateLimiter } from "../lib/rate-limit.js";
 
@@ -307,4 +311,90 @@ leaderRouter.post("/leader/login-request", loginRequestLimiter, async (req, res)
       expiresAt,
     },
   });
+});
+
+// ---- GET/PUT /api/leader/opportunity — session-scoped edit surface (module 5) ----
+// Both routes are gated by requireLeaderSession and use ONLY
+// `req.leaderOpportunityId` (from the session) to decide which row to
+// read/write — never an id from the URL or body. That's the whole point of
+// a shared-per-org session: a valid cookie for org A must be structurally
+// incapable of touching org B's row, so there is no :id param on either
+// route at all.
+leaderRouter.get("/leader/opportunity", requireLeaderSession, async (req, res) => {
+  const result = await getLeaderEditableOpportunity(req.leaderOpportunityId!);
+  if (!result) {
+    // The opportunity row itself is gone (e.g. hard-deleted) even though the
+    // session is still technically valid — treat as unauthorized rather than
+    // leaking a 404/500 distinction to the client.
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  res.json({ result });
+});
+
+// Field whitelist for the PUT body — matches getLeaderEditableOpportunity's
+// shape exactly (description, tags, link ["application info"], iconUrl,
+// links). Anything else in the body is silently ignored, not rejected —
+// matches this repo's existing PATCH /admin/opportunities/:id convention of
+// only reading recognized keys off `body` rather than 400ing on unknown
+// ones.
+leaderRouter.put("/leader/opportunity", requireLeaderSession, async (req, res) => {
+  const body = req.body ?? {};
+  const details: string[] = [];
+
+  if (body.description !== undefined && typeof body.description !== "string") {
+    details.push("description must be a string");
+  }
+  if (body.link !== undefined && body.link !== null && typeof body.link !== "string") {
+    details.push("link must be a string or null");
+  }
+  if (body.iconUrl !== undefined && body.iconUrl !== null && typeof body.iconUrl !== "string") {
+    details.push("iconUrl must be a string or null");
+  }
+  if (body.tagSlugs !== undefined) {
+    if (!Array.isArray(body.tagSlugs) || body.tagSlugs.some((s: unknown) => typeof s !== "string")) {
+      details.push("tagSlugs must be an array of strings");
+    }
+  }
+  let validatedLinks: { label: string; url: string; type: LinkType }[] | undefined;
+  if (body.links !== undefined) {
+    if (!Array.isArray(body.links)) {
+      details.push("links must be an array");
+    } else {
+      validatedLinks = [];
+      for (const entry of body.links) {
+        if (entry === null || typeof entry !== "object") {
+          details.push("each link must be an object with label, url, and type");
+          continue;
+        }
+        const label = typeof entry.label === "string" ? entry.label.trim() : "";
+        const url = typeof entry.url === "string" ? entry.url.trim() : "";
+        const type = typeof entry.type === "string" ? entry.type : "";
+        if (!label || !url || !LINK_TYPES.includes(type as LinkType)) {
+          details.push(`each link needs a non-empty label, url, and type in ${LINK_TYPES.join("|")}`);
+          continue;
+        }
+        validatedLinks.push({ label, url, type: type as LinkType });
+      }
+    }
+  }
+
+  if (details.length > 0) {
+    res.status(400).json({ error: "validation_error", details });
+    return;
+  }
+
+  const result = await updateLeaderOpportunity(req.leaderOpportunityId!, {
+    description: body.description,
+    link: body.link,
+    iconUrl: body.iconUrl,
+    tagSlugs: body.tagSlugs,
+    links: validatedLinks,
+  });
+
+  if (!result) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  res.json({ result });
 });
