@@ -26,6 +26,10 @@ import {
   updateAccessRequestStatus,
   getActiveAccessForOpportunity,
   createMagicLink,
+  listActiveSessionsForOpportunity,
+  setOpportunityAccessStatus,
+  revokeAllSessionsForOpportunity,
+  revokeSession,
   appendAuditLog,
 } from "../db/data-access.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
@@ -279,6 +283,79 @@ adminRouter.post("/admin/suggested-edits/:id/reject", async (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
+  res.json({ result });
+});
+
+// ---- Leader access revocation controls (Module 6 of 7) ----
+// Read/revoke-only over the opportunity_access + sessions tables built in
+// module 1. Deliberately does NOT touch access_requests (module 4's
+// approve/deny queue) or magic link issuance (modules 2/3) — this section
+// only ever moves an existing account to 'revoked' or kills individual
+// sessions.
+//
+// GET returns active sessions only (via listActiveSessionsForOpportunity),
+// not the full historical/denied/expired session set — active-only is
+// sufficient for a revocation control surface per spec; a full session
+// history view is out of scope here (would belong with the audit log
+// viewer, module 7).
+adminRouter.get("/admin/opportunities/:opportunityId/access", async (req, res) => {
+  const opportunityId = Number(req.params.opportunityId);
+  const access = await getActiveAccessForOpportunity(opportunityId);
+  const sessions = await listActiveSessionsForOpportunity(opportunityId);
+  res.json({ access, sessions });
+});
+
+// Revokes the org's active opportunity_access row AND cascades to every one
+// of its active sessions in the same operation (per spec: revoking the
+// account must cascade to sessions, not leave existing sessions usable).
+// One audit_log row is appended for the account-level revoke; the
+// per-session revocations that happen as part of the cascade do not each
+// get their own audit_log row (distinct from the single-session route
+// below, which does log its own action).
+adminRouter.post("/admin/opportunities/:opportunityId/access/revoke", async (req, res) => {
+  const opportunityId = Number(req.params.opportunityId);
+
+  const access = await getActiveAccessForOpportunity(opportunityId);
+  if (!access) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const updated = await setOpportunityAccessStatus(access.id, "revoked");
+  const revokedSessionCount = await revokeAllSessionsForOpportunity(opportunityId);
+  // actor is the literal 'admin' (not the logged-in admin's username) — see
+  // schema.ts's note on audit_log.actor: it's free text that holds either
+  // the literal 'admin' or an opportunity id acting as itself, not a
+  // per-admin-user identity.
+  await appendAuditLog({
+    opportunityId,
+    actor: "admin",
+    action: "revoke_access",
+  });
+
+  res.json({ result: updated, revokedSessionCount });
+});
+
+// Revokes a single session by id without touching the account's
+// opportunity_access status. Not nested under an opportunity path — takes
+// the session id directly (matches the spec's literal route shape) and
+// derives opportunityId for the audit_log row from the session row itself
+// (revokeSession()'s return value), rather than trusting a path param that
+// isn't present here.
+adminRouter.post("/admin/sessions/:sessionId/revoke", async (req, res) => {
+  const sessionId = Number(req.params.sessionId);
+
+  const result = await revokeSession(sessionId);
+  if (!result) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  await appendAuditLog({
+    opportunityId: result.opportunityId,
+    actor: "admin",
+    action: "revoke_session",
+  });
+
   res.json({ result });
 });
 

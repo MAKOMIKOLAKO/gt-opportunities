@@ -76,6 +76,13 @@ function renderLogin(errorMessage) {
 
 let currentStatus = "pending";
 let editingId = null;
+// Leader-access revocation panel state (Module 6 of 7). Keyed by
+// opportunity id so only one row's panel is fetched/expanded at a time.
+// `accessCache[id]` holds the last-loaded { access, sessions } response for
+// that opportunity so re-rendering the list (e.g. after a session revoke)
+// doesn't need a fresh network round trip unless explicitly refetched.
+let accessPanelOpenId = null;
+const accessCache = {};
 
 async function renderQueue() {
   root.innerHTML = `
@@ -153,6 +160,17 @@ function renderList(results) {
   listEl.querySelectorAll("[data-save]").forEach((btn) =>
     btn.addEventListener("click", () => handleSave(Number(btn.dataset.save), results))
   );
+  listEl.querySelectorAll("[data-toggle-access]").forEach((btn) =>
+    btn.addEventListener("click", () => handleToggleAccess(Number(btn.dataset.toggleAccess), results))
+  );
+  listEl.querySelectorAll("[data-revoke-account]").forEach((btn) =>
+    btn.addEventListener("click", () => handleRevokeAccount(Number(btn.dataset.revokeAccount), results))
+  );
+  listEl.querySelectorAll("[data-revoke-session]").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      handleRevokeSession(Number(btn.dataset.revokeSession), Number(btn.dataset.opportunityId), results)
+    )
+  );
 }
 
 function rowHtml(opp) {
@@ -171,10 +189,113 @@ function rowHtml(opp) {
         ${opp.status !== "approved" ? `<button class="admin-btn admin-btn-approve" data-approve="${opp.id}">Approve</button>` : ""}
         ${opp.status !== "rejected" ? `<button class="admin-btn admin-btn-reject" data-reject="${opp.id}">Reject</button>` : ""}
         <button class="admin-btn admin-btn-ghost" data-edit="${opp.id}">${isEditing ? "Cancel" : "Edit"}</button>
+        <button class="admin-btn admin-btn-ghost" data-toggle-access="${opp.id}">${accessPanelOpenId === opp.id ? "Hide Access" : "Manage Access"}</button>
       </div>
       ${isEditing ? editFormHtml(opp) : ""}
+      ${accessPanelOpenId === opp.id ? accessPanelHtml(opp.id) : ""}
     </div>
   `;
+}
+
+// ---------------------------------------------------------------------
+// Leader access revocation panel (Module 6 of 7). Reads
+// GET /api/admin/opportunities/:id/access (opportunity_access status +
+// active sessions only — denied/expired sessions aren't shown here, see
+// admin.ts for that call). Revoking the account cascades to all its active
+// sessions server-side; the panel refetches afterward so the session list
+// reflects that everything is gone rather than trying to reconcile it
+// client-side.
+// ---------------------------------------------------------------------
+
+function accessPanelHtml(opportunityId) {
+  const cached = accessCache[opportunityId];
+  if (!cached) {
+    return `<div class="admin-access-panel"><p class="admin-loading">Loading access…</p></div>`;
+  }
+  if (cached.error) {
+    return `<div class="admin-access-panel"><div class="admin-error">${escapeHtml(cached.error)}</div></div>`;
+  }
+
+  const { access, sessions } = cached;
+  const isActive = access && access.status === "active";
+
+  return `
+    <div class="admin-access-panel">
+      <div class="admin-access-status-row">
+        <span class="admin-access-label">Leader account:</span>
+        ${
+          access
+            ? `<span class="admin-status admin-status-${access.status === "active" ? "approved" : "rejected"}">${escapeHtml(access.status)}</span>`
+            : `<span class="admin-access-label">no account created</span>`
+        }
+        ${isActive ? `<button class="admin-btn admin-btn-reject" data-revoke-account="${opportunityId}">Revoke Account</button>` : ""}
+      </div>
+      <div class="admin-access-sessions">
+        <div class="admin-access-label">Active sessions (${sessions.length})</div>
+        ${
+          sessions.length === 0
+            ? `<p class="admin-empty">No active sessions.</p>`
+            : sessions
+                .map(
+                  (s) => `
+              <div class="admin-session-row">
+                <span>Session #${s.id} &middot; expires ${escapeHtml((s.expiresAt || "").slice(0, 16))}</span>
+                <button class="admin-btn admin-btn-reject" data-revoke-session="${s.id}" data-opportunity-id="${opportunityId}">Revoke</button>
+              </div>
+            `
+                )
+                .join("")
+        }
+      </div>
+    </div>
+  `;
+}
+
+async function loadAccessPanel(opportunityId, results) {
+  try {
+    const data = await AdminAPI.request(`/api/admin/opportunities/${opportunityId}/access`);
+    accessCache[opportunityId] = { access: data.access, sessions: data.sessions };
+  } catch (err) {
+    if (err.message === "unauthorized" || err.message === "not_authenticated") return;
+    accessCache[opportunityId] = { error: err.message || "Failed to load access." };
+  }
+  renderList(results);
+}
+
+function handleToggleAccess(id, results) {
+  if (accessPanelOpenId === id) {
+    accessPanelOpenId = null;
+    renderList(results);
+    return;
+  }
+  accessPanelOpenId = id;
+  delete accessCache[id];
+  renderList(results);
+  loadAccessPanel(id, results);
+}
+
+async function handleRevokeAccount(opportunityId, results) {
+  if (!window.confirm("Revoke this org's leader account? This immediately ends every active session for this org and cannot be undone from here.")) {
+    return;
+  }
+  try {
+    await AdminAPI.request(`/api/admin/opportunities/${opportunityId}/access/revoke`, { method: "POST" });
+    await loadAccessPanel(opportunityId, results);
+  } catch (err) {
+    if (err.message !== "unauthorized" && err.message !== "not_authenticated") showQueueError(err.message);
+  }
+}
+
+async function handleRevokeSession(sessionId, opportunityId, results) {
+  if (!window.confirm("Revoke this session? The org's leader will be signed out on that device immediately.")) {
+    return;
+  }
+  try {
+    await AdminAPI.request(`/api/admin/sessions/${sessionId}/revoke`, { method: "POST" });
+    await loadAccessPanel(opportunityId, results);
+  } catch (err) {
+    if (err.message !== "unauthorized" && err.message !== "not_authenticated") showQueueError(err.message);
+  }
 }
 
 function editFormHtml(opp) {
