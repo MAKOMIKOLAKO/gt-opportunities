@@ -886,14 +886,31 @@ main {
   padding: 8px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 700; cursor: pointer; border: none;
 }
 .admin-btn.approve { background: #1f7a3d; color: #fff; }
-.admin-btn.reject { background: #9c2b23; color: #fff; }
+.admin-btn.reject, .admin-btn.deny { background: #9c2b23; color: #fff; }
 .admin-btn.resolve { background: var(--navy); color: #fff; }
+.admin-btn.secondary { background: none; border: 1.5px solid var(--pi-mile); color: var(--navy); }
+.admin-btn:disabled { opacity: 0.55; cursor: default; }
 .admin-tabs { display: flex; gap: 10px; margin-bottom: 18px; }
 .admin-tabs button {
   background: none; border: 1.5px solid var(--pi-mile); color: var(--gray-matter);
   padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .admin-tabs button.active { border-color: var(--navy); color: var(--navy); background: var(--diploma); }
+
+/* ---------- Admin: leader access requests queue (module 4 of 7) ---------- */
+
+.claim-link-box {
+  background: #EAF6EE; border: 1px solid #1f7a3d; border-radius: 9px;
+  padding: 12px 14px; margin-top: 12px;
+}
+.claim-link-box-label { font-size: 11.5px; font-weight: 700; color: #1f7a3d; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
+.claim-link-box-row { display: flex; gap: 8px; align-items: center; }
+.claim-link-box input {
+  flex: 1; font-family: monospace; font-size: 12px; padding: 8px 10px;
+  border-radius: 6px; border: 1.5px solid var(--pi-mile); background: #fff; color: var(--navy);
+}
+.claim-link-box-note { font-size: 11.5px; color: var(--gray-matter); margin-top: 6px; }
+.claim-link-box-copied { color: #1f7a3d; font-weight: 700; }
 
 /* ---------- Admin: pending icons queue (icon submission feature) ---------- */
 
