@@ -48,7 +48,7 @@ pointed at the same Neon database instead of a SQLite volume.
   until the scrapers run — proves the DB connection works end to end).
 - Visit `<url>/health`, confirm `{"ok": true}`.
 - Visit `<url>/api/tags`, confirm the seeded tag vocabulary comes back.
-- Log into `<url>/admin.html` with the `ADMIN_USERNAME`/`ADMIN_PASSWORD`
+- Log into `<url>/admin/` with the `ADMIN_USERNAME`/`ADMIN_PASSWORD`
   set in step 2.3.
 
 ## 4. Enable the GitHub Actions workflows
