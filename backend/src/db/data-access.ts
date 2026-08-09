@@ -1541,6 +1541,53 @@ export async function listAuditLogForOpportunity(
   return rows.map(toAuditLogDTO);
 }
 
+/**
+ * Audit log viewer (Module 7 of 7) read path. Joins in the opportunity name
+ * so GET /api/admin/audit-log never needs a second per-row lookup — mirrors
+ * getSuggestedEditsForAdmin()/getAccessRequestsForAdmin()'s shape above.
+ *
+ * - `opportunityId` provided: delegates to listAuditLogForOpportunity() for
+ *   the actual row selection/filtering (single source of truth for that
+ *   query), then joins in the one opportunity name needed.
+ * - `opportunityId` omitted: "all recent entries across all orgs" mode —
+ *   no per-opportunity table to delegate to, so this queries auditLog
+ *   directly across every opportunity, most-recent-first, capped at
+ *   `limit` (default 200). This is a simple recency cap, not real
+ *   pagination — documented as the module 7 task's chosen scope.
+ */
+export async function listAuditLogWithOpportunityName(
+  opportunityId?: number,
+  filters: { actor?: string; action?: string } = {},
+  limit = 200
+): Promise<(AuditLogDTO & { opportunityName: string })[]> {
+  if (opportunityId !== undefined) {
+    const entries = await listAuditLogForOpportunity(opportunityId, filters);
+    if (entries.length === 0) return [];
+    const oppRows = await db
+      .select({ name: opportunities.name })
+      .from(opportunities)
+      .where(eq(opportunities.id, opportunityId));
+    const opportunityName = oppRows[0]?.name ?? "(deleted opportunity)";
+    return entries.map((e) => ({ ...e, opportunityName }));
+  }
+
+  const conditions = [];
+  if (filters.actor) conditions.push(eq(auditLog.actor, filters.actor));
+  if (filters.action) conditions.push(eq(auditLog.action, filters.action));
+
+  const rows = await db
+    .select({
+      entry: auditLog,
+      opportunityName: opportunities.name,
+    })
+    .from(auditLog)
+    .innerJoin(opportunities, eq(auditLog.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(auditLog.createdAt))
+    .limit(limit);
+  return rows.map((r) => ({ ...toAuditLogDTO(r.entry), opportunityName: r.opportunityName }));
+}
+
 // ---- Leader self-service edit (Module 5 of 7) ----
 // A logged-in org (see requireLeaderSession in routes/leader.ts) may edit a
 // narrow set of fields on its OWN opportunity row, live — no admin

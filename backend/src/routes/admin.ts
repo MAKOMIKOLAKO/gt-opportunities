@@ -31,6 +31,7 @@ import {
   revokeAllSessionsForOpportunity,
   revokeSession,
   appendAuditLog,
+  listAuditLogWithOpportunityName,
 } from "../db/data-access.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import type {
@@ -555,4 +556,44 @@ adminRouter.post("/admin/opportunities/:opportunityId/resend-claim-link", async 
     claimLinkPath: buildClaimLinkPath(rawToken),
     expiresAt,
   });
+});
+
+// ---- Audit log viewer (module 7 of 7) ----
+// Read-only over the audit_log rows every prior leader-access module (2-6)
+// already writes ('grant_access', 'edit_field', 'approve_request',
+// 'deny_request', 'reissue_claim_link', 'revoke_access', 'revoke_session').
+// This route never writes audit_log itself.
+//
+// ?opportunityId=<id> present: delegates to listAuditLogWithOpportunityName()
+// scoped to that opportunity (which itself delegates to
+// listAuditLogForOpportunity() for the row selection) — most-recent-first,
+// opportunity name joined in so the UI never needs a second call.
+//
+// ?opportunityId omitted: "all recent entries across all orgs" mode. No
+// pagination — capped at the most recent 200 rows (AUDIT_LOG_ALL_LIMIT
+// below), most-recent-first. 200 was chosen as a simple, generous-enough
+// default for an admin scanning "what happened recently" across every org;
+// a real paginated view was judged out of scope for this module (documented
+// per task instructions rather than silently added).
+const AUDIT_LOG_ALL_LIMIT = 200;
+
+adminRouter.get("/admin/audit-log", async (req, res) => {
+  const { opportunityId, actor, action } = req.query;
+
+  let opportunityIdFilter: number | undefined;
+  if (typeof opportunityId === "string" && opportunityId.length > 0) {
+    const parsed = Number(opportunityId);
+    if (!Number.isInteger(parsed)) {
+      res.status(400).json({ error: "validation_error", details: ["opportunityId must be an integer"] });
+      return;
+    }
+    opportunityIdFilter = parsed;
+  }
+
+  const filters: { actor?: string; action?: string } = {};
+  if (typeof actor === "string" && actor.length > 0) filters.actor = actor;
+  if (typeof action === "string" && action.length > 0) filters.action = action;
+
+  const results = await listAuditLogWithOpportunityName(opportunityIdFilter, filters, AUDIT_LOG_ALL_LIMIT);
+  res.json({ results, count: results.length, limit: opportunityIdFilter === undefined ? AUDIT_LOG_ALL_LIMIT : undefined });
 });

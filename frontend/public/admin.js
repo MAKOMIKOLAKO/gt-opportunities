@@ -3,17 +3,23 @@
 // icons queue (org profile icon submissions) + suggested edits queue
 // (single-field correction proposals against existing listings) + club/VIP
 // leader access requests queue (module 4 of 7 of the leader-access
-// feature). It does not attempt to build out opportunity-approval UI (that
-// queue already has a working API at GET/POST /api/admin/opportunities/*
-// but no frontend; out of scope here), nor the leader edit UI (module 5) or
-// revocation controls (module 6) — this panel only reviews/approves/denies
-// access requests and issues claim links.
+// feature) + a read-only audit log viewer (module 7 of 7). It does not
+// attempt to build out opportunity-approval UI (that queue already has a
+// working API at GET/POST /api/admin/opportunities/* but no frontend; out
+// of scope here), nor the leader edit UI (module 5) or revocation controls
+// (module 6, which live in the OTHER admin frontend — frontend/public/admin/
+// — see that file's comments; the audit log viewer was added HERE instead
+// of there because this panel already has the most other leader-access UI:
+// the full Access Requests tab, claim-link issuance/resend, all built
+// around the same "opportunity id text input" filter pattern this tab
+// reuses) — this panel only reviews/approves/denies access requests, issues
+// claim links, and now reads (never writes) the audit log.
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports | links | icons | suggestedEdits | accessRequests
+  tab: "reviews", // reviews | reports | links | icons | suggestedEdits | accessRequests | auditLog
   reviews: [],
   reports: [],
   links: [],
@@ -28,6 +34,10 @@ const state = {
   guidance: "",
   loading: false,
   error: "",
+  // ---- Audit log viewer (module 7 of 7) ----
+  auditLog: [],
+  auditLogLoaded: false, // distinguishes "never fetched yet" from "fetched, zero rows"
+  auditLogOpportunityId: "", // last-applied filter, shown back in the input
 };
 
 function setState(patch) {
@@ -227,6 +237,38 @@ async function resendClaimLink(rawOpportunityId) {
     setState({ claimLinks: { ...state.claimLinks, resend: data } });
   } catch (err) {
     setState({ error: err.message });
+  }
+}
+
+// ---- Audit log viewer (module 7 of 7) ----
+// Read-only view over GET /api/admin/audit-log. `rawOpportunityId` is read
+// directly from the input at call time (same reasoning as
+// resendClaimLink() above: state-driven re-render on every keystroke would
+// blow away cursor position). Empty/blank input means "all recent entries
+// across all orgs" — the backend's no-opportunityId mode, capped server-side
+// at its own limit (see admin.ts).
+async function loadAuditLog(rawOpportunityId) {
+  const trimmed = (rawOpportunityId ?? "").trim();
+  let qs = "";
+  if (trimmed.length > 0) {
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      setState({ error: "Enter a valid opportunity id, or leave blank for all recent entries." });
+      return;
+    }
+    qs = `?opportunityId=${parsed}`;
+  }
+  try {
+    setState({ loading: true, error: "" });
+    const data = await apiFetch(`/admin/audit-log${qs}`);
+    setState({
+      auditLog: data.results,
+      auditLogLoaded: true,
+      auditLogOpportunityId: trimmed,
+      loading: false,
+    });
+  } catch (err) {
+    setState({ loading: false, error: err.message });
   }
 }
 
@@ -488,6 +530,67 @@ function renderAccessRequestsTab() {
   return resendBox + rows;
 }
 
+function renderAuditLogTab() {
+  const filterBox = `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-title">Filter by opportunity</div>
+      <div class="admin-queue-item-meta" style="margin:6px 0 10px;">
+        Enter an opportunity id to see only its history, or leave blank and load to see the most recent
+        entries across every org.
+      </div>
+      <div class="claim-link-box-row">
+        <input type="text" id="auditLogOpportunityId" placeholder="Opportunity id (blank = all)"
+          value="${escapeHtml(state.auditLogOpportunityId)}"
+          style="max-width:220px;font-family:monospace;padding:8px 10px;border-radius:6px;border:1.5px solid var(--pi-mile);" />
+        <button type="button" class="admin-btn secondary" data-action="load-audit-log">Load</button>
+      </div>
+    </div>
+  `;
+
+  if (!state.auditLogLoaded) {
+    return `${filterBox}<div class="review-empty">No entries loaded yet — click Load.</div>`;
+  }
+  if (state.auditLog.length === 0) {
+    return `${filterBox}<div class="review-empty">No audit log entries found.</div>`;
+  }
+
+  const rows = state.auditLog
+    .map(
+      (a) => `
+    <tr>
+      <td>${escapeHtml((a.createdAt || "").slice(0, 19).replace("T", " "))}</td>
+      <td>${escapeHtml(a.opportunityName)} <span class="admin-queue-item-meta">(#${a.opportunityId})</span></td>
+      <td>${escapeHtml(a.actor)}</td>
+      <td>${escapeHtml(a.action)}</td>
+      <td>${escapeHtml(a.fieldChanged ?? "—")}</td>
+      <td>${escapeHtml(a.oldValue ?? "—")}</td>
+      <td>${escapeHtml(a.newValue ?? "—")}</td>
+    </tr>
+  `
+    )
+    .join("");
+
+  return `
+    ${filterBox}
+    <div style="overflow-x:auto;">
+      <table class="admin-audit-log-table" style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="text-align:left;border-bottom:1.5px solid var(--pi-mile);">
+            <th style="padding:6px 8px;">Time (UTC)</th>
+            <th style="padding:6px 8px;">Opportunity</th>
+            <th style="padding:6px 8px;">Actor</th>
+            <th style="padding:6px 8px;">Action</th>
+            <th style="padding:6px 8px;">Field</th>
+            <th style="padding:6px 8px;">Old value</th>
+            <th style="padding:6px 8px;">New value</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderDashboard() {
   return `
     <main class="view-admin">
@@ -499,6 +602,7 @@ function renderDashboard() {
         <button class="${state.tab === "icons" ? "active" : ""}" data-action="tab-icons">Pending Icons (${state.icons.length})</button>
         <button class="${state.tab === "suggestedEdits" ? "active" : ""}" data-action="tab-suggested-edits">Suggested Edits (${state.suggestedEdits.length})</button>
         <button class="${state.tab === "accessRequests" ? "active" : ""}" data-action="tab-access-requests">Access Requests (${state.accessRequests.length})</button>
+        <button class="${state.tab === "auditLog" ? "active" : ""}" data-action="tab-audit-log">Audit Log</button>
       </div>
       ${
         state.tab === "reviews"
@@ -511,6 +615,8 @@ function renderDashboard() {
           ? `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
           : state.tab === "accessRequests"
           ? `<div class="admin-guidance">Club/VIP leader access requests. Approving mints a one-time claim link — copy it and send it to the requester via the contact info shown (no automatic email/SMS delivery exists). Denying just closes the request; the org can file a new one.</div>`
+          : state.tab === "auditLog"
+          ? `<div class="admin-guidance">Read-only history of leader-access events (grants, edits, approvals, denials, claim link reissues, revocations) written by the other tabs and the leader-facing edit UI. This view never writes to the log.</div>`
           : `<div class="admin-guidance">Anonymous corrections proposed for a single field on an existing listing. Approving writes the new value directly onto the live listing (and refreshes search); rejecting leaves the listing untouched.</div>`
       }
       ${state.error ? `<div class="form-error" style="margin-bottom:14px;">${escapeHtml(state.error)}</div>` : ""}
@@ -527,6 +633,8 @@ function renderDashboard() {
           ? renderIconsTab()
           : state.tab === "accessRequests"
           ? renderAccessRequestsTab()
+          : state.tab === "auditLog"
+          ? renderAuditLogTab()
           : renderSuggestedEditsTab()
       }
     </main>
@@ -621,6 +729,14 @@ function wireEvents() {
       case "copy-claim-link":
         copyClaimLink(node.dataset.path, node);
         break;
+      case "tab-audit-log":
+        setState({ tab: "auditLog" });
+        break;
+      case "load-audit-log": {
+        const input = el("#auditLogOpportunityId");
+        loadAuditLog(input ? input.value : "");
+        break;
+      }
     }
   });
 }
