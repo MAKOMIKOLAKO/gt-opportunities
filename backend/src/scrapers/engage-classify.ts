@@ -115,8 +115,9 @@ async function upsertOpportunity(
   let opportunityId: number;
   if (existing.length > 0) {
     opportunityId = existing[0].id;
-    // Requested one-off: also force approved on update, overriding the
-    // usual "never touch status on re-classify" rule.
+    // Refresh content but deliberately do NOT touch `status` on update — an
+    // admin may have already reviewed this row, and a re-classify run must
+    // never silently flip a reviewed row back to pending or to approved.
     await db
       .update(opportunities)
       .set({
@@ -125,7 +126,6 @@ async function upsertOpportunity(
         majors: setMajors(majorTags),
         link: org.link,
         meta: setMeta(meta),
-        status: "approved",
         updatedAt: new Date().toISOString(),
       })
       .where(eq(opportunities.id, opportunityId));
@@ -143,7 +143,7 @@ async function upsertOpportunity(
         link: org.link,
         meta: setMeta(meta),
         source: "scraped",
-        status: "approved", // Requested one-off: auto-approve on insert.
+        status: "pending", // ALWAYS pending on insert — this pipeline never auto-approves.
       })
       .returning({ id: opportunities.id });
     opportunityId = row.id;
@@ -217,12 +217,9 @@ async function main() {
   const tagIdBySlug = await ensureTagIds();
   const orgById = new Map(orgs.map((o) => [o.id, o]));
 
-  // Requested one-off: insert every scraped org, not just ones classified
-  // technical. isTechnical/confidence/reasoning are still recorded in each
-  // row's meta for later filtering in the review queue.
   let inserted = 0;
   let updated = 0;
-  for (const c of classifications) {
+  for (const c of technical) {
     const org = orgById.get(c.orgId);
     if (!org) continue;
     const existingBefore = await db.select().from(opportunities).where(eq(opportunities.link, org.link));
@@ -231,7 +228,7 @@ async function main() {
     else inserted++;
   }
 
-  console.log(`Opportunities upserted: ${inserted} inserted, ${updated} updated (all scraped orgs).`);
+  console.log(`Opportunities upserted: ${inserted} inserted, ${updated} updated (technical orgs only).`);
 }
 
 main()

@@ -19,6 +19,11 @@ import {
   links,
   relatedOpportunities,
   suggestedEdits,
+  opportunityAccess,
+  accessRequests,
+  magicLinks,
+  sessions,
+  auditLog,
   type OpportunityType,
   type OpportunityStatus,
   type ReviewStatus,
@@ -27,11 +32,14 @@ import {
   type LinkType,
   type LinkStatus,
   type SuggestedEditStatus,
+  type AccessStatus,
+  type AccessRequestStatus,
+  type MagicLinkPurpose,
 } from "./schema.js";
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 import { embedOpportunity } from "../lib/embeddings.js";
 import { recomputeRelated } from "../lib/related-opportunities.js";
-import { generateUniqueSlug } from "../lib/slug.js";
+import { generateUniqueSlug, isSlugTaken } from "../lib/slug.js";
 
 export interface OpportunityDTO {
   id: number;
@@ -213,6 +221,82 @@ export async function getPublic(filters: PublicFilters = {}): Promise<Opportunit
   }
 
   return attachTags(sortByRelevanceThenTitle(rows, ranks));
+}
+
+export interface PublicPageFilters extends PublicFilters {
+  limit?: number;
+  offset?: number;
+}
+
+export interface PublicPage {
+  results: OpportunityDTO[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * Paginated sibling of getPublic() — same filters/ordering, but hydrates
+ * only one page of full rows instead of the entire approved table.
+ *
+ * getPublic() (and everything backed by it — homepage, sitemap.xml,
+ * category pages) was fetching `SELECT *` for every approved row (~850 and
+ * growing) on every single request, including the majors/meta/details JSON
+ * columns nobody needed until the moment a card was actually rendered. That
+ * was the dominant cost in the homepage's load time (measured: ~1.25MB
+ * response, 0.6-2s TTFB). Fixed here with a two-phase read instead of
+ * adding LIMIT/OFFSET directly to the existing query:
+ *   1. Resolve the ordered list of matching ids using only `id`/`name`
+ *      (cheap — no JSON columns) plus the existing search-rank/tag-match
+ *      lookups, which were already narrow queries.
+ *   2. Hydrate full rows for ONLY the requested page's ids.
+ * getPublic() itself is untouched (still used by seo.ts's sitemap/category
+ * pages and anything else that legitimately needs every row at once).
+ */
+export async function getPublicPage(filters: PublicPageFilters = {}): Promise<PublicPage> {
+  const limit = Math.min(Math.max(filters.limit ?? 30, 1), 100);
+  const offset = Math.max(filters.offset ?? 0, 0);
+
+  const conditions = [eq(opportunities.status, "approved" as const)];
+  if (filters.type) {
+    conditions.push(eq(opportunities.type, filters.type));
+  }
+
+  let idRows = await db
+    .select({ id: opportunities.id, name: opportunities.name })
+    .from(opportunities)
+    .where(and(...conditions));
+
+  let ranks: Map<number, number> | undefined;
+  if (filters.search) {
+    ranks = await searchMatchingIds(filters.search);
+    idRows = idRows.filter((r) => ranks!.has(r.id));
+  }
+
+  if (filters.tagSlugs && filters.tagSlugs.length > 0) {
+    const tagMatchRows = await db
+      .select({ opportunityId: opportunityTags.opportunityId })
+      .from(opportunityTags)
+      .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+      .where(inArray(tags.slug, filters.tagSlugs));
+    const matchIds = new Set(tagMatchRows.map((r) => r.opportunityId));
+    idRows = idRows.filter((r) => matchIds.has(r.id));
+  }
+
+  const orderedIds = sortByRelevanceThenTitle(idRows, ranks).map((r) => r.id);
+  const total = orderedIds.length;
+  const pageIds = orderedIds.slice(offset, offset + limit);
+  const hasMore = offset + limit < total;
+
+  if (pageIds.length === 0) return { results: [], total, hasMore: false };
+
+  const pageRows = await db.select().from(opportunities).where(inArray(opportunities.id, pageIds));
+  // `WHERE id IN (...)` doesn't preserve the list's order — re-sort the
+  // hydrated rows to match pageIds (i.e. the relevance/alphabetical order
+  // computed above), not whatever order Postgres happened to return them in.
+  const byId = new Map(pageRows.map((r) => [r.id, r]));
+  const orderedPageRows = pageIds.map((id) => byId.get(id)).filter((r): r is typeof pageRows[number] => r != null);
+
+  return { results: await attachTags(orderedPageRows), total, hasMore };
 }
 
 export type PublicBySlugResult =
@@ -447,7 +531,17 @@ export interface EditFields {
   link?: string | null;
   tagSlugs?: string[];
   type?: OpportunityType;
+  // Explicit slug override — lets an admin resolve a collision or clean up
+  // an auto-generated slug without going through a name change. Format is
+  // validated at the route layer (routes/admin.ts); this layer only owns
+  // the uniqueness check (see UpdateOpportunityResult's "slug_conflict").
+  slug?: string;
 }
+
+export type UpdateOpportunityResult =
+  | { kind: "not_found" }
+  | { kind: "slug_conflict" }
+  | { kind: "ok"; opportunity: OpportunityDTO };
 
 /** ADMIN-ONLY: edit fields and, if approve=true, flip status to approved in the same write. */
 export async function updateOpportunity(
@@ -455,16 +549,24 @@ export async function updateOpportunity(
   fields: EditFields,
   approve: boolean,
   reviewedBy: string
-): Promise<OpportunityDTO | null> {
+): Promise<UpdateOpportunityResult> {
   const existing = await db.select().from(opportunities).where(eq(opportunities.id, id));
-  if (existing.length === 0) return null;
+  if (existing.length === 0) return { kind: "not_found" };
 
   const patch: Record<string, unknown> = { updatedAt: sql`now()` };
-  // Renaming a live opportunity would silently break its indexed
-  // /opportunities/:slug URL, so regenerate the slug alongside the name and
-  // keep the old one in `previousSlug` — seo.ts 301s requests for it to the
-  // new slug instead of 404ing a link Google (or a bookmark) already has.
-  if (fields.name !== undefined && fields.name !== existing[0].name) {
+  // Renaming a live opportunity would silently break its indexed /org/:slug
+  // URL, so regenerate the slug alongside the name and keep the old one in
+  // `previousSlug` — seo.ts 301s requests for it to the new slug instead of
+  // 404ing a link Google (or a bookmark) already has. An explicit
+  // fields.slug (admin manually resolving a collision or renaming the URL
+  // directly) takes priority over the name-driven auto-regeneration below
+  // when both are present in the same request.
+  if (fields.slug !== undefined && fields.slug !== existing[0].slug) {
+    if (await isSlugTaken(fields.slug, id)) return { kind: "slug_conflict" };
+    patch.slug = fields.slug;
+    patch.previousSlug = existing[0].slug;
+    if (fields.name !== undefined) patch.name = fields.name;
+  } else if (fields.name !== undefined && fields.name !== existing[0].name) {
     patch.name = fields.name;
     patch.slug = await generateUniqueSlug(fields.name, id);
     patch.previousSlug = existing[0].slug;
@@ -499,7 +601,8 @@ export async function updateOpportunity(
   // related orgs regardless of whether `approve` was true (an edit to an
   // already-approved row should still refresh its related-orgs cache).
   await reembedAndRecompute(id);
-  return getByIdForAdmin(id);
+  const opportunity = await getByIdForAdmin(id);
+  return opportunity ? { kind: "ok", opportunity } : { kind: "not_found" };
 }
 
 // ---- Org profile icon (icon submission feature) ----
@@ -1102,4 +1205,670 @@ export async function rejectSuggestedEdit(id: number, reviewedBy: string): Promi
     .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
     .where(eq(suggestedEdits.id, id));
   return toSuggestedEditDTO((await getSuggestedEditById(id))!);
+}
+
+// ---- Club/VIP leader access (Module 1 of 7) ----
+// Pure data layer for the shared-account-per-org leader access feature: no
+// HTTP routes, no token generation/hashing, no business logic — just typed
+// CRUD over the six tables added in schema.ts (opportunity_access,
+// access_requests, magic_links, sessions, audit_log). Token/session
+// generation and route-level auth enforcement belong to later modules; every
+// function below trusts its caller to have already produced/verified
+// whatever it's passed (e.g. `tokenHash` is assumed to already be a SHA-256
+// hex hash, never a raw token).
+
+export interface AccessRequestDTO {
+  id: number;
+  opportunityId: number;
+  requesterName: string;
+  requesterContact: string;
+  note: string | null;
+  status: AccessRequestStatus;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+function toAccessRequestDTO(r: typeof accessRequests.$inferSelect): AccessRequestDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    requesterName: r.requesterName,
+    requesterContact: r.requesterContact,
+    note: r.note,
+    status: r.status,
+    createdAt: r.createdAt,
+    reviewedAt: r.reviewedAt,
+  };
+}
+
+export interface AccessRequestInput {
+  opportunityId: number;
+  requesterName: string;
+  requesterContact: string;
+  note?: string | null;
+}
+
+/** Creates a pending access_requests row. Does not touch opportunity_access. */
+export async function createAccessRequest(input: AccessRequestInput): Promise<AccessRequestDTO> {
+  const [row] = await db
+    .insert(accessRequests)
+    .values({
+      opportunityId: input.opportunityId,
+      requesterName: input.requesterName,
+      requesterContact: input.requesterContact,
+      note: input.note ?? null,
+      status: "pending",
+    })
+    .returning();
+  return toAccessRequestDTO(row);
+}
+
+/** Fetches a single access_requests row by id, or null if not found. */
+export async function getAccessRequest(id: number): Promise<AccessRequestDTO | null> {
+  const rows = await db.select().from(accessRequests).where(eq(accessRequests.id, id));
+  return rows.length ? toAccessRequestDTO(rows[0]) : null;
+}
+
+/** Lists all access_requests for one opportunity, optionally filtered by status, most-recent-first. */
+export async function listAccessRequestsForOpportunity(
+  opportunityId: number,
+  filters: { status?: AccessRequestStatus } = {}
+): Promise<AccessRequestDTO[]> {
+  const conditions = [eq(accessRequests.opportunityId, opportunityId)];
+  if (filters.status) conditions.push(eq(accessRequests.status, filters.status));
+  const rows = await db
+    .select()
+    .from(accessRequests)
+    .where(and(...conditions))
+    .orderBy(desc(accessRequests.createdAt));
+  return rows.map(toAccessRequestDTO);
+}
+
+/** Updates an access_requests row's status, stamping reviewedAt. Returns null if not found. */
+export async function updateAccessRequestStatus(
+  id: number,
+  status: AccessRequestStatus
+): Promise<AccessRequestDTO | null> {
+  const existing = await getAccessRequest(id);
+  if (!existing) return null;
+  await db
+    .update(accessRequests)
+    .set({ status, reviewedAt: sql`now()` })
+    .where(eq(accessRequests.id, id));
+  return getAccessRequest(id);
+}
+
+export interface OpportunityAccessDTO {
+  id: number;
+  opportunityId: number;
+  status: AccessStatus;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+function toOpportunityAccessDTO(r: typeof opportunityAccess.$inferSelect): OpportunityAccessDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    status: r.status,
+    createdAt: r.createdAt,
+    revokedAt: r.revokedAt,
+  };
+}
+
+/** Creates a new opportunity_access row (defaults to status='active'). Does not dedupe against existing rows for the same opportunity — callers should check getActiveAccessForOpportunity() first if a single shared row is desired. */
+export async function createOpportunityAccess(opportunityId: number): Promise<OpportunityAccessDTO> {
+  const [row] = await db.insert(opportunityAccess).values({ opportunityId, status: "active" }).returning();
+  return toOpportunityAccessDTO(row);
+}
+
+/** Fetches the most recently created opportunity_access row for an opportunity, regardless of status, or null if none exists. */
+export async function getOpportunityAccess(opportunityId: number): Promise<OpportunityAccessDTO | null> {
+  const rows = await db
+    .select()
+    .from(opportunityAccess)
+    .where(eq(opportunityAccess.opportunityId, opportunityId))
+    .orderBy(desc(opportunityAccess.createdAt));
+  return rows.length ? toOpportunityAccessDTO(rows[0]) : null;
+}
+
+/** Flips an opportunity_access row's status (active <-> revoked), stamping revokedAt when revoking. Returns null if not found. */
+export async function setOpportunityAccessStatus(
+  id: number,
+  status: AccessStatus
+): Promise<OpportunityAccessDTO | null> {
+  const rows = await db.select().from(opportunityAccess).where(eq(opportunityAccess.id, id));
+  if (rows.length === 0) return null;
+  await db
+    .update(opportunityAccess)
+    .set({ status, revokedAt: status === "revoked" ? sql`now()` : null })
+    .where(eq(opportunityAccess.id, id));
+  const updated = await db.select().from(opportunityAccess).where(eq(opportunityAccess.id, id));
+  return toOpportunityAccessDTO(updated[0]);
+}
+
+/** Helper: the currently-active opportunity_access row for an opportunity, or null if none/all revoked. */
+export async function getActiveAccessForOpportunity(opportunityId: number): Promise<OpportunityAccessDTO | null> {
+  const rows = await db
+    .select()
+    .from(opportunityAccess)
+    .where(and(eq(opportunityAccess.opportunityId, opportunityId), eq(opportunityAccess.status, "active" as const)))
+    .orderBy(desc(opportunityAccess.createdAt));
+  return rows.length ? toOpportunityAccessDTO(rows[0]) : null;
+}
+
+/** Helper: true if the opportunity currently has an active opportunity_access row. */
+export async function hasActiveAccess(opportunityId: number): Promise<boolean> {
+  return (await getActiveAccessForOpportunity(opportunityId)) !== null;
+}
+
+/** Helper: all pending access_requests for an opportunity, most-recent-first. */
+export async function getPendingRequestsForOpportunity(opportunityId: number): Promise<AccessRequestDTO[]> {
+  return listAccessRequestsForOpportunity(opportunityId, { status: "pending" });
+}
+
+/**
+ * ADMIN-ONLY (module 4 of 7): list access_requests across ALL opportunities
+ * for the admin review queue, optionally filtered by status, joined against
+ * opportunities so the queue can show the org's name/type without a second
+ * per-row lookup — mirrors getSuggestedEditsForAdmin()'s shape just above the
+ * Reviews section.
+ */
+export async function getAccessRequestsForAdmin(
+  filters: { status?: AccessRequestStatus } = {}
+): Promise<(AccessRequestDTO & { opportunityName: string; opportunityType: OpportunityType })[]> {
+  const conditions = filters.status ? [eq(accessRequests.status, filters.status)] : [];
+  const rows = await db
+    .select({
+      request: accessRequests,
+      opportunityName: opportunities.name,
+      opportunityType: opportunities.type,
+    })
+    .from(accessRequests)
+    .innerJoin(opportunities, eq(accessRequests.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(accessRequests.createdAt));
+  return rows.map((r) => ({
+    ...toAccessRequestDTO(r.request),
+    opportunityName: r.opportunityName,
+    opportunityType: r.opportunityType,
+  }));
+}
+
+export interface MagicLinkDTO {
+  id: number;
+  opportunityId: number;
+  tokenHash: string;
+  purpose: MagicLinkPurpose;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+}
+
+function toMagicLinkDTO(r: typeof magicLinks.$inferSelect): MagicLinkDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    tokenHash: r.tokenHash,
+    purpose: r.purpose,
+    expiresAt: r.expiresAt,
+    usedAt: r.usedAt,
+    createdAt: r.createdAt,
+  };
+}
+
+export interface MagicLinkInput {
+  opportunityId: number;
+  tokenHash: string;
+  purpose: MagicLinkPurpose;
+  expiresAt: string;
+}
+
+/** Creates a magic_links row. `tokenHash` must already be the SHA-256 hex hash of the raw token — hashing is not this module's job. */
+export async function createMagicLink(input: MagicLinkInput): Promise<MagicLinkDTO> {
+  const [row] = await db
+    .insert(magicLinks)
+    .values({
+      opportunityId: input.opportunityId,
+      tokenHash: input.tokenHash,
+      purpose: input.purpose,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  return toMagicLinkDTO(row);
+}
+
+/** Looks up a magic_links row by its token hash (unique). Callers are responsible for checking expiresAt/usedAt themselves. */
+export async function getMagicLinkByTokenHash(tokenHash: string): Promise<MagicLinkDTO | null> {
+  const rows = await db.select().from(magicLinks).where(eq(magicLinks.tokenHash, tokenHash));
+  return rows.length ? toMagicLinkDTO(rows[0]) : null;
+}
+
+/** Stamps a magic_links row as used (usedAt = now). Returns null if not found. */
+export async function markMagicLinkUsed(id: number): Promise<MagicLinkDTO | null> {
+  const rows = await db.select().from(magicLinks).where(eq(magicLinks.id, id));
+  if (rows.length === 0) return null;
+  await db.update(magicLinks).set({ usedAt: sql`now()` }).where(eq(magicLinks.id, id));
+  const updated = await db.select().from(magicLinks).where(eq(magicLinks.id, id));
+  return toMagicLinkDTO(updated[0]);
+}
+
+/**
+ * Atomically looks up AND consumes a magic_links row by token hash in one
+ * statement (module 2 of 7 — leader-access session handling): the
+ * `UPDATE ... WHERE token_hash = ? AND used_at IS NULL AND expires_at > now()
+ * RETURNING` shape means two concurrent requests racing to redeem the same
+ * raw token can never both succeed — only one UPDATE can ever match a row
+ * still satisfying `used_at IS NULL`, so single-use is enforced by Postgres
+ * itself rather than by a separate SELECT-then-UPDATE the app has to keep
+ * race-free. Returns null for EVERY failure case (not found, already used,
+ * expired) so callers get no signal distinguishing them — callers that want
+ * a reason for server-side logging only should fall back to
+ * getMagicLinkByTokenHash() themselves.
+ */
+export async function consumeMagicLinkAtomic(tokenHash: string): Promise<MagicLinkDTO | null> {
+  const rows = await db
+    .update(magicLinks)
+    .set({ usedAt: sql`now()` })
+    .where(
+      and(
+        eq(magicLinks.tokenHash, tokenHash),
+        sql`${magicLinks.usedAt} IS NULL`,
+        sql`${magicLinks.expiresAt} > now()`
+      )
+    )
+    .returning();
+  return rows.length ? toMagicLinkDTO(rows[0]) : null;
+}
+
+export interface SessionDTO {
+  id: number;
+  opportunityId: number;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
+function toSessionDTO(r: typeof sessions.$inferSelect): SessionDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    tokenHash: r.tokenHash,
+    createdAt: r.createdAt,
+    expiresAt: r.expiresAt,
+    revokedAt: r.revokedAt,
+  };
+}
+
+export interface SessionInput {
+  opportunityId: number;
+  tokenHash: string;
+  expiresAt: string;
+}
+
+/** Creates a sessions row. `tokenHash` must already be the SHA-256 hex hash of the raw session token. */
+export async function createSession(input: SessionInput): Promise<SessionDTO> {
+  const [row] = await db
+    .insert(sessions)
+    .values({
+      opportunityId: input.opportunityId,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  return toSessionDTO(row);
+}
+
+/** Looks up a sessions row by its token hash (unique). Callers are responsible for checking expiresAt/revokedAt themselves. */
+export async function getSessionByTokenHash(tokenHash: string): Promise<SessionDTO | null> {
+  const rows = await db.select().from(sessions).where(eq(sessions.tokenHash, tokenHash));
+  return rows.length ? toSessionDTO(rows[0]) : null;
+}
+
+/** Revokes a single session by id, stamping revokedAt. Returns null if not found. */
+export async function revokeSession(id: number): Promise<SessionDTO | null> {
+  const rows = await db.select().from(sessions).where(eq(sessions.id, id));
+  if (rows.length === 0) return null;
+  await db.update(sessions).set({ revokedAt: sql`now()` }).where(eq(sessions.id, id));
+  const updated = await db.select().from(sessions).where(eq(sessions.id, id));
+  return toSessionDTO(updated[0]);
+}
+
+/** Revokes every currently-unrevoked session for an opportunity (e.g. on access revocation). Returns the count revoked. */
+export async function revokeAllSessionsForOpportunity(opportunityId: number): Promise<number> {
+  const result = await db
+    .update(sessions)
+    .set({ revokedAt: sql`now()` })
+    .where(and(eq(sessions.opportunityId, opportunityId), sql`${sessions.revokedAt} IS NULL`))
+    .returning({ id: sessions.id });
+  return result.length;
+}
+
+/** Lists sessions for an opportunity that are neither revoked nor expired, most-recent-first. */
+export async function listActiveSessionsForOpportunity(opportunityId: number): Promise<SessionDTO[]> {
+  const rows = await db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.opportunityId, opportunityId),
+        sql`${sessions.revokedAt} IS NULL`,
+        sql`${sessions.expiresAt} > now()`
+      )
+    )
+    .orderBy(desc(sessions.createdAt));
+  return rows.map(toSessionDTO);
+}
+
+export interface AuditLogDTO {
+  id: number;
+  opportunityId: number;
+  actor: string;
+  action: string;
+  fieldChanged: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  createdAt: string;
+}
+
+function toAuditLogDTO(r: typeof auditLog.$inferSelect): AuditLogDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    actor: r.actor,
+    action: r.action,
+    fieldChanged: r.fieldChanged,
+    oldValue: r.oldValue,
+    newValue: r.newValue,
+    createdAt: r.createdAt,
+  };
+}
+
+export interface AuditLogInput {
+  opportunityId: number;
+  actor: string;
+  action: string;
+  fieldChanged?: string | null;
+  oldValue?: string | null;
+  newValue?: string | null;
+}
+
+/**
+ * Append-only: inserts one audit_log row. Never updates/deletes existing
+ * rows. Optional second `executor` param (a `db.transaction(async (tx) =>
+ * ...)` callback's `tx`) lets a caller include the insert in an existing
+ * transaction — e.g. updateLeaderOpportunity() below writes the opportunity
+ * row and its audit_log rows atomically. Defaults to the module-level `db`
+ * for every existing (non-transactional) call site.
+ */
+export async function appendAuditLog(
+  input: AuditLogInput,
+  executor: Pick<typeof db, "insert"> = db
+): Promise<AuditLogDTO> {
+  const [row] = await executor
+    .insert(auditLog)
+    .values({
+      opportunityId: input.opportunityId,
+      actor: input.actor,
+      action: input.action,
+      fieldChanged: input.fieldChanged ?? null,
+      oldValue: input.oldValue ?? null,
+      newValue: input.newValue ?? null,
+    })
+    .returning();
+  return toAuditLogDTO(row);
+}
+
+/** Lists audit_log rows for an opportunity, most-recent-first, optionally filtered by actor and/or action. */
+export async function listAuditLogForOpportunity(
+  opportunityId: number,
+  filters: { actor?: string; action?: string } = {}
+): Promise<AuditLogDTO[]> {
+  const conditions = [eq(auditLog.opportunityId, opportunityId)];
+  if (filters.actor) conditions.push(eq(auditLog.actor, filters.actor));
+  if (filters.action) conditions.push(eq(auditLog.action, filters.action));
+  const rows = await db
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt));
+  return rows.map(toAuditLogDTO);
+}
+
+/**
+ * Audit log viewer (Module 7 of 7) read path. Joins in the opportunity name
+ * so GET /api/admin/audit-log never needs a second per-row lookup — mirrors
+ * getSuggestedEditsForAdmin()/getAccessRequestsForAdmin()'s shape above.
+ *
+ * - `opportunityId` provided: delegates to listAuditLogForOpportunity() for
+ *   the actual row selection/filtering (single source of truth for that
+ *   query), then joins in the one opportunity name needed.
+ * - `opportunityId` omitted: "all recent entries across all orgs" mode —
+ *   no per-opportunity table to delegate to, so this queries auditLog
+ *   directly across every opportunity, most-recent-first, capped at
+ *   `limit` (default 200). This is a simple recency cap, not real
+ *   pagination — documented as the module 7 task's chosen scope.
+ */
+export async function listAuditLogWithOpportunityName(
+  opportunityId?: number,
+  filters: { actor?: string; action?: string } = {},
+  limit = 200
+): Promise<(AuditLogDTO & { opportunityName: string })[]> {
+  if (opportunityId !== undefined) {
+    const entries = await listAuditLogForOpportunity(opportunityId, filters);
+    if (entries.length === 0) return [];
+    const oppRows = await db
+      .select({ name: opportunities.name })
+      .from(opportunities)
+      .where(eq(opportunities.id, opportunityId));
+    const opportunityName = oppRows[0]?.name ?? "(deleted opportunity)";
+    return entries.map((e) => ({ ...e, opportunityName }));
+  }
+
+  const conditions = [];
+  if (filters.actor) conditions.push(eq(auditLog.actor, filters.actor));
+  if (filters.action) conditions.push(eq(auditLog.action, filters.action));
+
+  const rows = await db
+    .select({
+      entry: auditLog,
+      opportunityName: opportunities.name,
+    })
+    .from(auditLog)
+    .innerJoin(opportunities, eq(auditLog.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(auditLog.createdAt))
+    .limit(limit);
+  return rows.map((r) => ({ ...toAuditLogDTO(r.entry), opportunityName: r.opportunityName }));
+}
+
+// ---- Leader self-service edit (Module 5 of 7) ----
+// A logged-in org (see requireLeaderSession in routes/leader.ts) may edit a
+// narrow set of fields on its OWN opportunity row, live — no admin
+// pending/review step. The field set intentionally mirrors, as closely as
+// this feature's shape allows, the fields non-admins are already trusted to
+// set elsewhere in this codebase:
+//   - description  -> same field/type as SUGGESTABLE_FIELDS ("description")
+//   - tags         -> opportunity_tags, same tagSlugs replace-all shape the
+//                     admin PATCH /admin/opportunities/:id route uses
+//   - link         -> opportunities.link, the single primary "how to apply"
+//                     link (schema.ts calls this out by name); same field
+//                     SUGGESTABLE_FIELDS exposes as "link"
+//   - iconUrl      -> same column public icon submission
+//                     (submitIconPending) targets, EXCEPT a leader edit
+//                     writes iconUrl directly (live) instead of
+//                     iconPendingUrl (admin-gated) — see task spec: leader
+//                     edits are live immediately, by design, unlike the
+//                     anonymous public icon-submission path.
+//   - links        -> the separate `links` table (additional apply-adjacent/
+//                     homepage/social links beyond the primary `link`
+//                     above), full-replace, same shape
+//                     insertLinkSubmission() accepts. Leader-authored rows
+//                     are inserted as status='approved' directly (live),
+//                     again unlike the public path (insertLinkSubmission,
+//                     which is always 'pending').
+// Explicitly NOT editable here: name/type/majors/meta/details/status/source
+// — those stay admin-only (updateOpportunity) or out of scope entirely.
+export interface LeaderEditableOpportunity {
+  id: number;
+  name: string;
+  description: string;
+  link: string | null;
+  iconUrl: string | null;
+  tagSlugs: string[];
+  links: { id: number; label: string; url: string; type: LinkType }[];
+}
+
+/** Session-scoped read: the current leader-editable snapshot of one opportunity. Null if the opportunity somehow no longer exists (e.g. deleted after the session was issued). */
+export async function getLeaderEditableOpportunity(opportunityId: number): Promise<LeaderEditableOpportunity | null> {
+  const rows = await db.select().from(opportunities).where(eq(opportunities.id, opportunityId));
+  if (rows.length === 0) return null;
+  const row = rows[0];
+
+  const tagRows = await db
+    .select({ slug: tags.slug })
+    .from(opportunityTags)
+    .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+    .where(eq(opportunityTags.opportunityId, opportunityId));
+
+  const linkRows = await db
+    .select({ id: links.id, label: links.label, url: links.url, type: links.type })
+    .from(links)
+    .where(eq(links.opportunityId, opportunityId))
+    .orderBy(links.createdAt);
+
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    link: row.link,
+    iconUrl: row.iconUrl,
+    tagSlugs: tagRows.map((t) => t.slug),
+    links: linkRows,
+  };
+}
+
+export interface LeaderEditFields {
+  description?: string;
+  link?: string | null;
+  iconUrl?: string | null;
+  tagSlugs?: string[];
+  links?: { label: string; url: string; type: LinkType }[];
+}
+
+// Stable serialization for diffing/audit-logging non-scalar fields
+// (tagSlugs / links) as a single before/after string pair.
+function serializeTagSlugs(slugs: string[]): string {
+  return JSON.stringify([...slugs].sort());
+}
+function serializeLinks(rows: { label: string; url: string; type: LinkType }[]): string {
+  return JSON.stringify(
+    [...rows]
+      .map((r) => ({ label: r.label, url: r.url, type: r.type }))
+      .sort((a, b) => (a.label + a.url).localeCompare(b.label + b.url))
+  );
+}
+
+/**
+ * Session-scoped write: applies a partial update of ONLY the
+ * leader-editable fields to the live opportunities row (plus its tags/links
+ * side tables), and writes one audit_log row per field that actually
+ * changed (old !== new), in a single transaction. `opportunityId` MUST come
+ * from `req.leaderOpportunityId` (the session), never from request
+ * body/params — see routes/leader.ts. Returns null if the opportunity no
+ * longer exists.
+ */
+export async function updateLeaderOpportunity(
+  opportunityId: number,
+  fields: LeaderEditFields
+): Promise<LeaderEditableOpportunity | null> {
+  const before = await getLeaderEditableOpportunity(opportunityId);
+  if (!before) return null;
+
+  const actor = String(opportunityId);
+  const auditEntries: { fieldChanged: string; oldValue: string | null; newValue: string | null }[] = [];
+
+  const patch: Record<string, unknown> = {};
+  if (fields.description !== undefined && fields.description !== before.description) {
+    patch.description = fields.description;
+    auditEntries.push({ fieldChanged: "description", oldValue: before.description, newValue: fields.description });
+  }
+  if (fields.link !== undefined && fields.link !== before.link) {
+    patch.link = fields.link;
+    auditEntries.push({ fieldChanged: "link", oldValue: before.link, newValue: fields.link });
+  }
+  if (fields.iconUrl !== undefined && fields.iconUrl !== before.iconUrl) {
+    patch.iconUrl = fields.iconUrl;
+    auditEntries.push({ fieldChanged: "iconUrl", oldValue: before.iconUrl, newValue: fields.iconUrl });
+  }
+
+  const tagsChanged =
+    fields.tagSlugs !== undefined && serializeTagSlugs(fields.tagSlugs) !== serializeTagSlugs(before.tagSlugs);
+  if (tagsChanged) {
+    auditEntries.push({
+      fieldChanged: "tags",
+      oldValue: serializeTagSlugs(before.tagSlugs),
+      newValue: serializeTagSlugs(fields.tagSlugs!),
+    });
+  }
+
+  const linksChanged =
+    fields.links !== undefined && serializeLinks(fields.links) !== serializeLinks(before.links);
+  if (linksChanged) {
+    auditEntries.push({
+      fieldChanged: "links",
+      oldValue: serializeLinks(before.links),
+      newValue: serializeLinks(fields.links!),
+    });
+  }
+
+  if (Object.keys(patch).length > 0) patch.updatedAt = sql`now()`;
+
+  await db.transaction(async (tx) => {
+    if (Object.keys(patch).length > 0) {
+      await tx.update(opportunities).set(patch).where(eq(opportunities.id, opportunityId));
+    }
+    if (tagsChanged) {
+      await tx.delete(opportunityTags).where(eq(opportunityTags.opportunityId, opportunityId));
+      const idRows = fields.tagSlugs!.length
+        ? await tx.select({ id: tags.id }).from(tags).where(inArray(tags.slug, fields.tagSlugs!))
+        : [];
+      for (const tagRow of idRows) {
+        await tx.insert(opportunityTags).values({ opportunityId, tagId: tagRow.id });
+      }
+    }
+    if (linksChanged) {
+      await tx.delete(links).where(eq(links.opportunityId, opportunityId));
+      for (const l of fields.links!) {
+        await tx.insert(links).values({
+          opportunityId,
+          label: l.label,
+          url: l.url,
+          type: l.type,
+          status: "approved" as const,
+        });
+      }
+    }
+    for (const entry of auditEntries) {
+      await appendAuditLog(
+        {
+          opportunityId,
+          actor,
+          action: "edit_field",
+          fieldChanged: entry.fieldChanged,
+          oldValue: entry.oldValue,
+          newValue: entry.newValue,
+        },
+        tx
+      );
+    }
+  });
+
+  if (patch.description !== undefined || tagsChanged) {
+    await refreshSearchBlob(opportunityId);
+    await reembedAndRecompute(opportunityId);
+  }
+
+  return getLeaderEditableOpportunity(opportunityId);
 }

@@ -92,9 +92,42 @@
 
 .admin-login-card .admin-btn-primary { width: 100%; }
 
+.admin-login-note {
+  max-width: 380px;
+  margin: 16px auto 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* ---------- Shell / queue ---------- */
 
 .admin-shell { min-height: 100vh; display: flex; flex-direction: column; }
+
+/* Section nav — top-level tabs between the entire admin surfaces
+   (Opportunities / Reviews / Reports / ...). Distinct from .admin-tab
+   below, which is the pending/approved/rejected status filter WITHIN the
+   Opportunities section only. */
+.admin-section-nav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 10px 32px;
+  background: #fff;
+  border-bottom: 1px solid var(--pi-mile);
+}
+.admin-section-tab {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 6px;
+  color: var(--gray-matter);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.admin-section-tab:hover { background: var(--diploma); color: var(--navy); }
+.admin-section-tab.active { background: var(--navy); color: #fff; }
 
 .admin-topbar {
   background: var(--navy);
@@ -202,13 +235,149 @@
 .admin-edit-form textarea { min-height: 70px; resize: vertical; }
 .admin-edit-actions { display: flex; justify-content: flex-end; }
 
+/* ---------- Leader access revocation panel (Module 6 of 7) ---------- */
+
+.admin-access-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--pi-mile);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-access-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-access-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gray-matter);
+}
+
+.admin-access-sessions { display: flex; flex-direction: column; gap: 8px; }
+
+.admin-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--pi-mile);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* ---------- Guidance banner (reviews / reports / links / icons /
+   suggested edits / access requests / audit log — one per section) ---------- */
+
+.admin-guidance {
+  background: var(--diploma);
+  border: 1px solid var(--pi-mile);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--ink);
+  margin-bottom: 18px;
+  line-height: 1.5;
+}
+
+/* ---------- Field label/value row (used inside .admin-row for reviews,
+   reports, links, access requests) ---------- */
+
+.admin-field-row { display: flex; gap: 10px; font-size: 13px; padding: 4px 0; }
+.admin-field-row-label { flex: 0 0 160px; font-weight: 600; color: var(--gray-matter); }
+.admin-field-row-value { flex: 1; color: var(--ink); word-break: break-word; }
+
+.admin-pill-suggest { background: var(--gold); color: var(--navy); }
+
+/* ---------- Claim link box (access requests) ---------- */
+
+.admin-claim-link-box {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--pi-mile);
+}
+.admin-claim-link-box-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--status-open-fg);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+.admin-claim-link-row { display: flex; gap: 8px; align-items: center; }
+.admin-claim-link-row input[readonly] {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--pi-mile);
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12.5px;
+  background: var(--diploma);
+}
+.admin-claim-link-input-id {
+  max-width: 200px;
+  font-family: monospace;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--pi-mile);
+}
+.admin-claim-link-box-note { font-size: 11.5px; color: var(--gray-matter); margin-top: 6px; }
+
+/* ---------- Icon compare (pending icons) ---------- */
+
+.admin-icon-compare { display: flex; align-items: center; gap: 16px; margin: 10px 0; }
+.admin-icon-compare-col { text-align: center; }
+.admin-icon-compare-label { font-size: 11px; font-weight: 600; color: var(--gray-matter); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+.admin-icon-compare-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--pi-mile);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--gray-matter);
+  overflow: hidden;
+}
+.admin-icon-compare-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.admin-icon-compare-arrow { color: var(--gray-matter); font-size: 18px; }
+
+/* ---------- Suggested-edit diff ---------- */
+
+.admin-suggest-diff { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; font-size: 13px; }
+.admin-suggest-diff-old { color: #b3261e; text-decoration: line-through; opacity: 0.8; }
+.admin-suggest-diff-new { color: var(--status-open-fg); font-weight: 600; }
+
+/* ---------- Audit log table ---------- */
+
+.admin-audit-table-wrap { overflow-x: auto; }
+.admin-audit-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-audit-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1.5px solid var(--pi-mile);
+  color: var(--gray-matter);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.admin-audit-table td { padding: 8px 10px; border-bottom: 1px solid var(--pi-mile); vertical-align: top; }
+
 /* Touch targets: approve/reject/edit controls are comfortably clickable
    with a mouse but under the ~44px touch minimum; widen the tap area and
    the gap between adjacent buttons on mobile/tablet without touching
    desktop density. */
 @media (max-width: 640px) {
   .admin-btn,
-  .admin-tab {
+  .admin-tab,
+  .admin-section-tab {
     min-height: 44px;
     display: inline-flex;
     align-items: center;
@@ -218,11 +387,15 @@
   .admin-status-tabs { gap: 10px; flex-wrap: wrap; }
   .admin-topbar { padding: 14px 16px; }
   .admin-main { padding: 20px 16px; }
+  .admin-section-nav { padding: 8px 16px; }
+  .admin-field-row { flex-direction: column; gap: 2px; }
+  .admin-field-row-label { flex-basis: auto; }
 
   /* Inputs under 16px trigger iOS Safari's auto-zoom on focus. */
   .admin-field input,
   .admin-edit-form input,
-  .admin-edit-form textarea {
+  .admin-edit-form textarea,
+  .admin-claim-link-input-id {
     font-size: 16px;
   }
 }

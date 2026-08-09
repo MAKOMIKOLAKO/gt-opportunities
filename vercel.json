@@ -4,6 +4,7 @@
   "outputDirectory": "frontend/public",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/org/(.*)", "destination": "/api" },
     { "source": "/opportunities/(.*)", "destination": "/api" },
     { "source": "/categories/(.*)", "destination": "/api" },
     { "source": "/sitemap.xml", "destination": "/api" },

@@ -2,22 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="refresh" content="0; url=/admin/" />
 <title>Admin — Opportunity Finder</title>
 <meta name="robots" content="noindex, nofollow" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
-<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" /></noscript>
-<link rel="stylesheet" href="style.css" />
 <script>
-  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  // The two separate admin frontends this repo used to have (this file's
+  // old inline app, and /admin/) were merged into one shell at /admin/ —
+  // see frontend/public/admin/admin.js. This file now only exists so an old
+  // bookmark/muscle-memory visit to /admin.html still lands somewhere
+  // useful instead of 404ing or showing a dead app.
+  location.replace("/admin/");
 </script>
-<script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
-<div id="app"></div>
-<script src="admin.js" defer></script>
+<p><a href="/admin/">Continue to the admin panel</a></p>
 </body>
 </html>

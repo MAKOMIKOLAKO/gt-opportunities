@@ -290,3 +290,143 @@ export const relatedOpportunities = pgTable(
     pk: primaryKey({ columns: [table.opportunityId, table.relatedOpportunityId] }),
   })
 );
+
+// ---- Club/VIP leader access (Module 1 of 7) ----
+// Schema + data-access layer only, for a shared-account-per-org "leader
+// access" feature: a club/VIP can be granted a single shared login (no
+// per-person editor accounts — one shared account per org, intentional, see
+// task notes) to edit their own listing. This module lays down the six
+// supporting tables; token generation/hashing and HTTP routes are later
+// modules.
+
+export const ACCESS_STATUSES = ["active", "revoked"] as const;
+export type AccessStatus = (typeof ACCESS_STATUSES)[number];
+
+// One row per opportunity that currently has (or has ever had) leader
+// access granted. `status` flips to 'revoked' rather than deleting the row,
+// so history is preserved (no destructive access-loss). Multiple
+// `access_requests` rows for the same opportunity all resolve to this single
+// shared row once approved (see access_requests below) — there is
+// intentionally no per-person editor table.
+export const opportunityAccess = pgTable(
+  "opportunity_access",
+  {
+    id: serial("id").primaryKey(),
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    status: text("status").$type<AccessStatus>().notNull().default("active"),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+    revokedAt: timestamp("revoked_at", { mode: "string" }),
+  },
+  (table) => ({
+    opportunityIdIdx: index("opportunity_access_opportunity_id_idx").on(table.opportunityId),
+    statusIdx: index("opportunity_access_status_idx").on(table.status),
+  })
+);
+
+export const ACCESS_REQUEST_STATUSES = ["pending", "approved", "denied"] as const;
+export type AccessRequestStatus = (typeof ACCESS_REQUEST_STATUSES)[number];
+
+// Public "claim my org" request, reviewed by an admin before it grants (or
+// reuses) an `opportunity_access` row. Many requests can point at the same
+// `opportunity_id` (e.g. two officers both file a claim) — all approved
+// requests for a given opportunity resolve to the SAME shared
+// opportunity_access row, not one row each.
+export const accessRequests = pgTable(
+  "access_requests",
+  {
+    id: serial("id").primaryKey(),
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    requesterName: text("requester_name").notNull(),
+    // Free text: email or phone, not split into separate columns — matches
+    // this schema's convention elsewhere of not over-modeling contact info
+    // (see reports.reporterContact).
+    requesterContact: text("requester_contact").notNull(),
+    note: text("note"),
+    status: text("status").$type<AccessRequestStatus>().notNull().default("pending"),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+    reviewedAt: timestamp("reviewed_at", { mode: "string" }),
+  },
+  (table) => ({
+    opportunityIdIdx: index("access_requests_opportunity_id_idx").on(table.opportunityId),
+    statusIdx: index("access_requests_status_idx").on(table.status),
+  })
+);
+
+export const MAGIC_LINK_PURPOSES = ["claim", "login"] as const;
+export type MagicLinkPurpose = (typeof MAGIC_LINK_PURPOSES)[number];
+
+// One-time login/claim links. Only the SHA-256 hash of the raw token is ever
+// persisted here (`tokenHash`) — the raw token itself is never stored, only
+// ever emailed/shown once at issuance time by a later module. Hashing/token
+// generation is intentionally NOT part of this module.
+export const magicLinks = pgTable(
+  "magic_links",
+  {
+    id: serial("id").primaryKey(),
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    purpose: text("purpose").$type<MagicLinkPurpose>().notNull(),
+    expiresAt: timestamp("expires_at", { mode: "string" }).notNull(),
+    usedAt: timestamp("used_at", { mode: "string" }),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  },
+  (table) => ({
+    opportunityIdIdx: index("magic_links_opportunity_id_idx").on(table.opportunityId),
+    tokenHashIdx: uniqueIndex("magic_links_token_hash_idx").on(table.tokenHash),
+  })
+);
+
+// Live/expired session tokens for the shared org login. Same "hash only,
+// never the raw token" discipline as magic_links.
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: serial("id").primaryKey(),
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+    expiresAt: timestamp("expires_at", { mode: "string" }).notNull(),
+    revokedAt: timestamp("revoked_at", { mode: "string" }),
+  },
+  (table) => ({
+    opportunityIdIdx: index("sessions_opportunity_id_idx").on(table.opportunityId),
+    tokenHashIdx: uniqueIndex("sessions_token_hash_idx").on(table.tokenHash),
+  })
+);
+
+// Append-only audit trail for everything done via the leader-access surface
+// (edits, grants, revokes, request denials, etc). `actor` is free text
+// because it can hold either the literal 'admin' or an opportunity id (an
+// org acting as itself) — not modeled as a FK/enum on purpose. `action` is
+// also free text (not a Postgres enum / $type union) since the action
+// vocabulary is expected to grow as later modules add more mutation types;
+// this deliberately deviates from the $type<...>-enum-as-text convention
+// used for closed vocabularies elsewhere in this file (see OPPORTUNITY_TYPES,
+// AccessStatus, etc.) because this vocabulary is NOT closed.
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: serial("id").primaryKey(),
+    opportunityId: integer("opportunity_id")
+      .notNull()
+      .references(() => opportunities.id, { onDelete: "cascade" }),
+    actor: text("actor").notNull(),
+    action: text("action").notNull(),
+    fieldChanged: text("field_changed"),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    createdAt: timestamp("created_at", { mode: "string" }).notNull().default(sql`now()`),
+  },
+  (table) => ({
+    opportunityIdIdx: index("audit_log_opportunity_id_idx").on(table.opportunityId),
+    createdAtIdx: index("audit_log_created_at_idx").on(table.createdAt),
+  })
+);

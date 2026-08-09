@@ -84,7 +84,7 @@ generated fresh every time the backend process starts (`backend/src/lib/auth.ts`
 It's printed to the backend's console on startup and also written to a
 gitignored `RUN-STATUS.md` at the repo root, so it's discoverable without
 ever being hardcoded or committed. **Restarting the backend invalidates the
-previous password.** Log in at `/admin.html` (served by the frontend) with
+previous password.** Log in at `/admin/` (served by the frontend) with
 username `admin` and that password.
 
 ## Populating data
@@ -92,7 +92,7 @@ username `admin` and that password.
 The site starts empty. Two scrapers populate it; both write rows as
 `pending` review status (except VIP, which is auto-approved on ingest — see
 scraper scripts for current behavior) so nothing reaches the public app
-without going through `/admin.html`'s review queue first.
+without going through `/admin/`'s review queue first.
 
 ```bash
 # GT VIP catalog (vip.gatech.edu) — idempotent upsert by VIP entry ID

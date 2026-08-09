@@ -172,9 +172,12 @@ one of `pending | approved | rejected`.
 
 ### `GET /api/opportunities`
 
-List/search/filter approved opportunities. Backed by
-`getPublic()` — status is always `approved`; there is no way to request other
-statuses through this endpoint.
+List/search/filter approved opportunities, paginated. Backed by
+`getPublicPage()` — status is always `approved`; there is no way to request
+other statuses through this endpoint. Edge-cached
+(`Cache-Control: s-maxage=30, stale-while-revalidate`) since this reads the
+same live, leader-editable table as `/org/:slug` and needs the same
+short-cache tradeoff.
 
 Query params (all optional, combinable):
 
@@ -183,14 +186,18 @@ Query params (all optional, combinable):
 | `type` | `vip \| lab \| club` | exact match |
 | `search` | string | full-text match against name, description, majors, tag labels, and every string value in `details` (not just description) |
 | `tags` | comma-separated tag slugs, e.g. `robotics,ml-ai` | opportunity must have at least one matching tag |
+| `limit` | integer | page size; default `30`, capped to `100` |
+| `offset` | integer | default `0` |
 
-Example: `GET /api/opportunities?type=vip&tags=robotics,ml-ai&search=drone`
+Example: `GET /api/opportunities?type=vip&tags=robotics,ml-ai&search=drone&limit=30&offset=30`
 
 Response `200`:
 ```json
 {
-  "results": [ /* array of Opportunity, shape above */ ],
-  "count": 1
+  "results": [ /* array of Opportunity, shape above — one page, length <= limit */ ],
+  "count": 1,        // results.length, for this page
+  "total": 1,         // total matches across every page for these filters
+  "hasMore": false    // true if offset + limit < total
 }
 ```
 
