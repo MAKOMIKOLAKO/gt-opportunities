@@ -273,7 +273,14 @@ ${breadcrumbNav(breadcrumbItems)}
   <p>${opp.link ? `Visit the <a href="${escapeHtml(opp.link)}" rel="noopener">official page</a> to apply or learn more.` : "Contact information is not yet available for this listing."}</p>
   ${extraLinks}
   ${relatedHtml}
-  <p class="ssr-app-link"><a href="/?opportunity=${opp.id}">Leave a review or suggest an edit in the interactive app →</a></p>
+  <!-- A URL *fragment* (#opportunity=<id>), not a query string
+       (?opportunity=<id>) — a fragment is never sent to the server, so it
+       can't collide with the GET / legacy-redirect route below, which 301s
+       exactly that query string to /org/:slug. If this used a query string
+       too, clicking this link would just bounce straight back to this same
+       SSR page instead of reaching the interactive app. See app.js's
+       applyDeepLinkFromUrl for the client-side counterpart. -->
+  <p class="ssr-app-link"><a href="/#opportunity=${opp.id}">Leave a review or suggest an edit in the interactive app →</a></p>
 </article>
 </main>
 ${siteFooterHtml()}`;
@@ -287,6 +294,36 @@ ${siteFooterHtml()}`;
 // indexed under the old prefix don't 404.
 seoRouter.get("/opportunities/:slug", (req, res) => {
   res.redirect(301, `/org/${req.params.slug}`);
+});
+
+// ---- GET / with ?opportunity=<id> — legacy deep link, permanent redirect ----
+// Before real client-side routing landed (history.pushState onto
+// /org/:slug — see app.js's navigateToDetail), this query string was the
+// only way any URL pointed at a specific listing, and it's what got
+// indexed/bookmarked/shared before then. 301 it to the current canonical
+// /org/:slug URL instead of leaving it to strand on the bare homepage.
+// Deliberately does NOT touch the still-live "leave a review / suggest an
+// edit" hop above — that one uses a URL *fragment* (never sent to the
+// server), so it can never reach this handler in the first place. Only
+// registered for requests that actually carry the param — see
+// frontend/server.js (dev, two-service Railway) and vercel.json's
+// `has`-gated rewrite (single-deploy prod), both of which route such
+// requests here instead of the static homepage; everything else keeps
+// hitting the static index.html directly.
+seoRouter.get("/", async (req, res, next) => {
+  const rawId = req.query.opportunity;
+  const id = Number(rawId);
+  if (typeof rawId !== "string" || !Number.isInteger(id) || id <= 0) {
+    next();
+    return;
+  }
+  const results = await getPublic();
+  const match = results.find((r) => r.id === id);
+  if (!match) {
+    next();
+    return;
+  }
+  res.redirect(301, `/org/${match.slug}`);
 });
 
 function managePageShell(bodyHtml: string): string {

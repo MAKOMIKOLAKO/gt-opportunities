@@ -8,6 +8,11 @@
     { "source": "/opportunities/(.*)", "destination": "/api" },
     { "source": "/categories/(.*)", "destination": "/api" },
     { "source": "/sitemap.xml", "destination": "/api" },
-    { "source": "/robots.txt", "destination": "/api" }
+    { "source": "/robots.txt", "destination": "/api" },
+    {
+      "source": "/",
+      "has": [{ "type": "query", "key": "opportunity" }],
+      "destination": "/api"
+    }
   ]
 }
