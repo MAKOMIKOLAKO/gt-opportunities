@@ -23,6 +23,8 @@ import {
   getSessionByTokenHash,
   appendAuditLog,
   listAccessRequestsForOpportunity,
+  createAccessRequest,
+  getPublic,
 } from "../db/data-access.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { createRateLimiter } from "../lib/rate-limit.js";
@@ -307,4 +309,60 @@ leaderRouter.post("/leader/login-request", loginRequestLimiter, async (req, res)
       expiresAt,
     },
   });
+});
+
+// ---- POST /api/leader/access-requests — public "request leader access" form (module 3 of 7) ----
+// No auth required — same public-submission shape as public.ts's review/
+// link/suggest-edit endpoints: validates against the real (approved-only)
+// opportunity via getPublic(), the same "can't distinguish pending/rejected
+// from doesn't-exist" convention used throughout that file, then inserts a
+// pending access_requests row via createAccessRequest() (module 1's data
+// layer). Nothing here touches opportunity_access — an admin approving the
+// request (module 4, not this module) is what eventually issues the first
+// claim magic_links row.
+//
+// RATE LIMIT (documented per task instructions): 5 requests per 15 minutes
+// per IP, matching loginRequestLimiter just above — this endpoint is the
+// same "low-traffic, self-service, public, no CAPTCHA" shape as
+// login-request, so it reuses the same numbers rather than inventing new
+// ones. Keyed by IP only (not by opportunity), so a caller can't hammer a
+// single org's request queue by spreading requests across many
+// opportunity_ids either.
+const accessRequestLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
+
+leaderRouter.post("/leader/access-requests", accessRequestLimiter, async (req, res) => {
+  const body = req.body ?? {};
+  const opportunityId = Number(body.opportunity_id ?? body.opportunityId);
+  const requesterName = typeof body.requester_name === "string" ? body.requester_name.trim() : "";
+  const requesterContact = typeof body.requester_contact === "string" ? body.requester_contact.trim() : "";
+  const noteRaw = typeof body.note === "string" ? body.note.trim() : "";
+
+  const details: string[] = [];
+  if (!Number.isInteger(opportunityId)) details.push("opportunity_id is required");
+  if (!requesterName) details.push("requester_name is required");
+  if (!requesterContact) details.push("requester_contact is required");
+  if (details.length > 0) {
+    res.status(400).json({ error: "validation_error", details });
+    return;
+  }
+
+  // Confirm the opportunity is a real, publicly visible (approved) org
+  // before accepting a request against it — same "404, don't leak
+  // pending/rejected rows" convention as public.ts's review/link/
+  // suggest-edit endpoints.
+  const publicOpportunities = await getPublic();
+  const opp = publicOpportunities.find((r) => r.id === opportunityId);
+  if (!opp) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const created = await createAccessRequest({
+    opportunityId,
+    requesterName,
+    requesterContact,
+    note: noteRaw || null,
+  });
+
+  res.status(201).json({ result: { id: created.id, status: created.status } });
 });

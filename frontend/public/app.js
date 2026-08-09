@@ -107,6 +107,8 @@ const state = {
   iconSubmitMessage: "",
   suggestEditFormOpportunityId: null,
   suggestEditMessage: "",
+  accessRequestFormOpportunityId: null,
+  accessRequestMessage: "",
   filtersOpen: false, // mobile-only filter drawer; ignored above the collapse breakpoint (see .dir-filters CSS)
 };
 
@@ -176,6 +178,21 @@ async function submitSuggestEdit(opportunityId, field, newValueRaw) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ field, newValue }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
+  return data.result;
+}
+
+// Public "request leader access" submission (module 3 of 7) — see
+// backend/src/routes/leader.ts POST /api/leader/access-requests. No auth;
+// lands as a pending access_requests row for an admin to approve later
+// (module 4, not built here).
+async function submitAccessRequest(opportunityId, body) {
+  const res = await fetch(`${API_BASE}/leader/access-requests`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ opportunity_id: opportunityId, ...body }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
@@ -445,11 +462,13 @@ function renderDetailBody(opp) {
           <div class="detail-footer-actions">
             <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
             <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+            <button class="leader-access-btn" data-action="open-access-request" data-id="${opp.id}">Leading this club/VIP? Request access</button>
           </div>
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
         </div>
         ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
         ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
+        ${state.accessRequestMessage ? `<div class="utility-feedback">${escapeHtml(state.accessRequestMessage)}</div>` : ""}
 
         ${renderLinksBlock(opp)}
 
@@ -652,6 +671,46 @@ function renderSuggestEditModal() {
           <div class="review-form-actions">
             <button type="button" class="review-form-cancel-btn" data-action="close-suggest-edit">Cancel</button>
             <button type="submit" class="submit-btn">Submit suggestion</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------
+// Rendering — request leader access (module 3 of 7)
+//
+// Public, no-account entry point for a club/VIP leader to ask for shared
+// "manage this listing" access. Defaults the org to whatever detail page
+// it was opened from (opportunity id already loaded via loadDetail() —
+// no separate org picker). Posts to POST /api/leader/access-requests and
+// lands as a pending access_requests row; an admin approves it later
+// (module 4, not this module) which is what eventually sends a claim link.
+// ---------------------------------------------------------------------
+
+function renderAccessRequestModal() {
+  if (!state.accessRequestFormOpportunityId) return "";
+  const org = detailCache[state.accessRequestFormOpportunityId];
+  const orgName = org ? org.name : `Org #${state.accessRequestFormOpportunityId}`;
+  return `
+    <div class="review-form-modal-backdrop" data-action="close-access-request">
+      <div class="review-form-modal" data-stop-close="1">
+        <h3>Request leader access</h3>
+        <div class="modal-sub">For current officers/leads of <strong>${escapeHtml(orgName)}</strong> who want to be able to edit this listing. An admin reviews every request before granting access.</div>
+        <form id="accessRequestForm" data-id="${state.accessRequestFormOpportunityId}">
+          <label for="accessRequestOrg">Organization</label>
+          <input id="accessRequestOrg" type="text" value="${escapeAttr(orgName)}" disabled />
+          <label for="accessRequestName">Your name</label>
+          <input id="accessRequestName" name="requesterName" type="text" required maxlength="200" autocomplete="name" />
+          <label for="accessRequestContact">Contact email or phone</label>
+          <input id="accessRequestContact" name="requesterContact" type="text" required maxlength="200" placeholder="you@gatech.edu" autocomplete="email" />
+          <label for="accessRequestNote">Note <span class="submit-links-hint">(optional — e.g. your role in the org)</span></label>
+          <textarea id="accessRequestNote" name="note" rows="3" maxlength="1000"></textarea>
+          <div id="accessRequestError"></div>
+          <div class="review-form-actions">
+            <button type="button" class="review-form-cancel-btn" data-action="close-access-request">Cancel</button>
+            <button type="submit" class="submit-btn">Submit request</button>
           </div>
         </form>
       </div>
@@ -980,7 +1039,8 @@ function render() {
 function renderModals() {
   const modalRoot = el("#modalRoot");
   if (!modalRoot) return;
-  modalRoot.innerHTML = renderReviewFormModal() + renderFlagFormModal() + renderIconFormModal() + renderSuggestEditModal();
+  modalRoot.innerHTML =
+    renderReviewFormModal() + renderFlagFormModal() + renderIconFormModal() + renderSuggestEditModal() + renderAccessRequestModal();
 }
 
 let eventsWired = false;
@@ -1007,7 +1067,8 @@ function wireEvents() {
       (node.dataset.action === "close-review-form" ||
         node.dataset.action === "close-flag-form" ||
         node.dataset.action === "close-icon-form" ||
-        node.dataset.action === "close-suggest-edit") &&
+        node.dataset.action === "close-suggest-edit" ||
+        node.dataset.action === "close-access-request") &&
       node.classList.contains("review-form-modal-backdrop") &&
       e.target.closest("[data-stop-close]")
     ) {
@@ -1043,6 +1104,8 @@ function wireEvents() {
           suggestEditMessage: "",
           iconFormOpportunityId: null,
           iconSubmitMessage: "",
+          accessRequestFormOpportunityId: null,
+          accessRequestMessage: "",
         });
         break;
       case "submit-again":
@@ -1086,6 +1149,13 @@ function wireEvents() {
         if (e.target !== node && node.dataset.stopClose) return;
         setState({ suggestEditFormOpportunityId: null });
         break;
+      case "open-access-request":
+        setState({ accessRequestFormOpportunityId: Number(node.dataset.id), accessRequestMessage: "" });
+        break;
+      case "close-access-request":
+        if (e.target !== node && node.dataset.stopClose) return;
+        setState({ accessRequestFormOpportunityId: null });
+        break;
     }
   });
 
@@ -1115,6 +1185,8 @@ function wireEvents() {
       handleIconSubmit(e);
     } else if (e.target.id === "suggestEditForm") {
       handleSuggestEditSubmit(e);
+    } else if (e.target.id === "accessRequestForm") {
+      handleAccessRequestSubmit(e);
     }
   });
 }
@@ -1176,6 +1248,32 @@ async function handleSuggestEditSubmit(e) {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = "Submit suggestion";
+    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function handleAccessRequestSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const opportunityId = Number(form.dataset.id);
+  const btn = form.querySelector("button[type=submit]");
+  const errorEl = el("#accessRequestError");
+  errorEl.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Submitting…";
+  try {
+    await submitAccessRequest(opportunityId, {
+      requester_name: form.requesterName.value.trim(),
+      requester_contact: form.requesterContact.value.trim(),
+      note: form.note.value.trim() || undefined,
+    });
+    setState({
+      accessRequestFormOpportunityId: null,
+      accessRequestMessage: "Thanks — your access request was submitted. An admin will review it.",
+    });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Submit request";
     errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
   }
 }

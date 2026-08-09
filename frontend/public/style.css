@@ -595,6 +595,18 @@ main {
 }
 .icon-submit-btn:hover { border-color: var(--navy); color: var(--navy); background: var(--diploma); }
 
+.leader-access-btn {
+  border: 1.5px solid var(--gold);
+  background: none;
+  color: #7a6a2e;
+  padding: 12px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.leader-access-btn:hover { background: var(--diploma); border-color: #7a6a2e; }
+
 /* ---------- Additional links (approved links queue) ---------- */
 
 .links-block { margin: 20px 0; padding-top: 8px; border-top: 1px solid #EFF1EE; }
@@ -852,6 +864,12 @@ main {
   width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
   font-size: 13.5px; margin-bottom: 14px; resize: vertical;
 }
+.review-form-modal input[type="text"],
+.review-form-modal input[type="email"] {
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: 1.5px solid var(--pi-mile);
+  font-size: 13.5px; margin-bottom: 14px; box-sizing: border-box;
+}
+.review-form-modal input[disabled] { background: var(--diploma); color: var(--gray-matter); }
 .review-form-actions { display: flex; gap: 10px; justify-content: flex-end; }
 .review-form-cancel-btn {
   background: none; border: 1.5px solid var(--pi-mile); color: var(--gray-matter);
@@ -1010,6 +1028,7 @@ main {
   .clear-filters-btn,
   .icon-submit-btn,
   .propose-edit-btn,
+  .leader-access-btn,
   .add-link-row-btn,
   .submit-again-btn,
   .review-write-btn,
