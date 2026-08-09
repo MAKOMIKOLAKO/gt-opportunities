@@ -4,10 +4,14 @@
 
 const API_BASE = "/api"; // same-origin; frontend/server.js proxies this to the backend
 
+// Per-type icon-background / label colors, reused directly from the
+// Club Aggregator mockup's own catColors/avatarBg maps (VIP -> its "Arts &
+// Culture" rose, Lab -> its "Technology" blue, Club -> its "Service"
+// green) — see the matching --cat-* custom properties in style.css.
 const TYPE_META = {
-  vip: { label: "VIP Team", color: "#003057" },
-  lab: { label: "Research Lab", color: "#5F249F" },
-  club: { label: "Student Org", color: "#00707A" },
+  vip: { label: "VIP Team", color: "oklch(62% 0.11 340)", catColor: "oklch(55% 0.1 340)" },
+  lab: { label: "Research Lab", color: "oklch(55% 0.09 200)", catColor: "oklch(50% 0.09 200)" },
+  club: { label: "Student Org", color: "oklch(56% 0.09 140)", catColor: "oklch(52% 0.08 140)" },
 };
 
 const TYPE_FILTERS = [
@@ -98,6 +102,7 @@ const state = {
   typeFilter: "",
   discipline: "All Disciplines",
   selectedId: null,
+  detailTab: "about", // about | apply | reviews — reset to "about" on every open-detail
   allTags: [],
   submitted: false,
   lastSubmittedName: "",
@@ -232,12 +237,13 @@ function renderFooter() {
 // ---------------------------------------------------------------------
 
 function decorateOrg(opp) {
-  const type = TYPE_META[opp.type] || { label: opp.type, color: "#54585A" };
+  const type = TYPE_META[opp.type] || { label: opp.type, color: "#54585A", catColor: "#54585A" };
   const discipline = computeDiscipline(opp.majors);
   return {
     ...opp,
     typeLabel: type.label,
     iconColor: type.color,
+    catColor: type.catColor,
     discipline,
     initials: initials(opp.name),
   };
@@ -253,6 +259,7 @@ function renderDirectory() {
   return `
     <main class="view-directory">
       <div class="dir-heading">
+        <div class="dir-eyebrow">Georgia Institute of Technology</div>
         <h1>Find your next project</h1>
         <p>Search VIP teams, research labs, and technical student organizations in one place — no more digging through CampusGroups.</p>
       </div>
@@ -356,7 +363,7 @@ function renderCardsInto(orgs) {
           </div>
           <div>
             <div class="org-card-name">${escapeHtml(o.name)}</div>
-            <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
+            <div class="org-card-sub" style="color:${o.catColor}">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
           </div>
           <div class="org-card-blurb">${escapeHtml(truncate(o.description, 140))}</div>
           <div class="tag-chips">
@@ -390,73 +397,101 @@ let directoryCache = [];
 function renderDetailShell() {
   return `
     <main class="view-detail">
-      <button class="detail-back" data-action="go-directory">&larr; Back to directory</button>
       <div id="detailContent"><div class="state-msg">Loading&hellip;</div></div>
     </main>
   `;
 }
 
 // Detail data is cached per-id so that opening/closing the "Suggest an
-// edit" or "Submit an icon" modals — which go through the same setState()
-// -> render() path as everything else — doesn't refetch and flash the
-// whole detail pane back to a loading state on every click.
+// edit" or "Submit an icon" modals, and switching tabs — all of which go
+// through the same setState() -> render() path as everything else — don't
+// refetch and flash the whole detail pane back to a loading state.
 let detailCache = {};
+
+const DETAIL_TABS = [
+  { key: "about", label: "About" },
+  { key: "apply", label: "How to Apply" },
+  { key: "reviews", label: "Reviews" },
+];
+
+function renderDetailAboutTab(opp, d) {
+  return `
+    <div class="detail-info-grid">
+      ${
+        opp.type === "club"
+          ? ""
+          : `
+      <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
+      <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+      `
+      }
+      <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
+    </div>
+
+    ${
+      (opp.tags || []).length
+        ? `
+    <div class="detail-tags-block">
+      <div class="detail-tags-label">Skills &amp; Keywords</div>
+      <div class="tag-chips">${opp.tags.map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}</div>
+    </div>`
+        : ""
+    }
+
+    ${renderRelatedOrgsBlock(opp)}
+
+    <div class="detail-manage-row">
+      <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+      <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+    </div>
+    ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
+    ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
+  `;
+}
+
+function renderDetailApplyTab(opp, d) {
+  return `
+    ${d.applyUrl ? `<p><a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">Apply / Learn more &rarr;</a></p>` : ""}
+    <p class="detail-contact">Contact: ${escapeHtml(d.contact)}</p>
+    ${renderLinksBlock(opp)}
+  `;
+}
 
 function renderDetailBody(opp) {
     const d = detailFields(opp);
+    const tab = state.detailTab;
     return `
       <div class="detail-card">
+        <nav class="detail-breadcrumbs" aria-label="Breadcrumb">
+          <button type="button" data-action="go-directory">Directory</button>
+          <span aria-hidden="true">/</span>
+          <span class="crumb-cat" style="color:${opp.catColor}">${escapeHtml(opp.typeLabel)}</span>
+          <span aria-hidden="true">/</span>
+          <span class="crumb-current">${escapeHtml(opp.name)}</span>
+        </nav>
+
         <div class="detail-header">
           ${renderOrgIcon(opp, "lg")}
           <div class="detail-header-text">
-            <div class="detail-title-row">
-              <h1>${escapeHtml(opp.name)}</h1>
-            </div>
-            <div class="detail-sub">${escapeHtml(opp.typeLabel)} &middot; ${escapeHtml(opp.discipline)}</div>
+            <h1>${escapeHtml(opp.name)}</h1>
+            <div class="detail-sub" style="color:${opp.catColor}">${escapeHtml(opp.typeLabel)}</div>
           </div>
         </div>
 
         <p class="detail-desc">${escapeHtml(opp.description || "")}</p>
 
-        <div class="detail-info-grid">
-          ${
-            opp.type === "club"
-              ? ""
-              : `
-          <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
-          <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+        <div class="detail-tabs" role="tablist">
+          ${DETAIL_TABS.map(
+            (t) => `
+          <button class="detail-tab-btn ${tab === t.key ? "active" : ""}" role="tab" aria-selected="${tab === t.key}" data-action="detail-tab" data-tab="${t.key}">${t.label}</button>
           `
-          }
-          <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
+          ).join("")}
         </div>
 
-        ${
-          (opp.tags || []).length
-            ? `
-        <div class="detail-tags-block">
-          <div class="detail-tags-label">Skills &amp; Keywords</div>
-          <div class="tag-chips">${opp.tags.map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}</div>
-        </div>`
-            : ""
-        }
-
-        <div class="detail-footer">
-          ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
-          <div class="detail-footer-actions">
-            <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
-            <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
-          </div>
-          <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
+        <div class="detail-tab-panel" role="tabpanel">
+          ${tab === "apply" ? renderDetailApplyTab(opp, d) : tab === "reviews" ? renderReviewsBlock(opp) : renderDetailAboutTab(opp, d)}
         </div>
-        ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
-        ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
-
-        ${renderLinksBlock(opp)}
-
-        ${renderReviewsBlock(opp)}
       </div>
-
-      ${renderRelatedOrgsBlock(opp)}
     `;
 }
 
@@ -482,8 +517,8 @@ async function loadDetail(id, { forceRefresh = false } = {}) {
 
 // ---------------------------------------------------------------------
 // Rendering — detail page utility actions ("Submit an icon" / "Suggest an
-// edit"). Both are secondary actions that live together in .detail-footer
-// next to "How to Apply" rather than one being buried in its own row below.
+// edit"). Both are secondary actions that live together in .detail-manage-row
+// at the bottom of the About tab, out of the way of Apply/social buttons.
 //
 // Icon submission is scoped to the detail page only, not the "submit an
 // org" form — a brand new org submission has no id until an admin
@@ -532,7 +567,7 @@ function renderRelatedOrgsBlock(opp) {
     <div class="related-orgs-block">
       <h2>Related organizations</h2>
       <div class="related-orgs-scroller">
-        ${related.map(renderRelatedOrgCard).join("")}
+        ${related.map(renderRelatedOrgChip).join("")}
       </div>
     </div>
   `;
@@ -607,29 +642,15 @@ async function handleIconSubmit(e) {
   }
 }
 
-function renderRelatedOrgCard(o) {
-  return `
-    <button class="org-card related-org-card" data-action="open-detail" data-id="${o.id}">
-      <div class="org-card-top">
-        ${renderOrgIcon(o)}
-      </div>
-      <div>
-        <div class="org-card-name">${escapeHtml(o.name)}</div>
-        <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
-      </div>
-      <div class="org-card-blurb">${escapeHtml(truncate(o.description, 110))}</div>
-      <div class="tag-chips">
-        ${(o.tags || []).slice(0, 3).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
-      </div>
-    </button>
-  `;
+function renderRelatedOrgChip(o) {
+  return `<button class="related-org-chip" data-action="open-detail" data-id="${o.id}">${escapeHtml(o.name)}</button>`;
 }
 
 // ---------------------------------------------------------------------
 // Rendering — suggest an edit
 //
 // Lightweight, unobtrusive "propose a correction" affordance, opened from
-// the "Suggest an edit" button in .detail-footer. Posts to
+// the "Suggest an edit" button in .detail-manage-row. Posts to
 // POST /api/opportunities/:id/suggest-edit and lands in the admin
 // "Suggested Edits" queue as a pending row — nothing here touches the live
 // listing directly.
@@ -1039,11 +1060,15 @@ function wireEvents() {
         setState({
           view: "detail",
           selectedId: Number(node.dataset.id),
+          detailTab: "about",
           suggestEditFormOpportunityId: null,
           suggestEditMessage: "",
           iconFormOpportunityId: null,
           iconSubmitMessage: "",
         });
+        break;
+      case "detail-tab":
+        setState({ detailTab: node.dataset.tab });
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
