@@ -459,12 +459,12 @@ function renderDetailBody(opp) {
 
         <div class="detail-footer">
           ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
-          <div class="detail-footer-actions">
-            <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
-            <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
-            <button class="leader-access-btn" data-action="open-access-request" data-id="${opp.id}">Leading this club/VIP? Request access</button>
-          </div>
           <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
+        </div>
+        <div class="detail-footer-actions">
+          <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+          <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+          <button class="leader-access-btn" data-action="open-access-request" data-id="${opp.id}">Leading this club/VIP? Request access</button>
         </div>
         ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
         ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
