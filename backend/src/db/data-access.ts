@@ -1272,6 +1272,34 @@ export async function getPendingRequestsForOpportunity(opportunityId: number): P
   return listAccessRequestsForOpportunity(opportunityId, { status: "pending" });
 }
 
+/**
+ * ADMIN-ONLY (module 4 of 7): list access_requests across ALL opportunities
+ * for the admin review queue, optionally filtered by status, joined against
+ * opportunities so the queue can show the org's name/type without a second
+ * per-row lookup — mirrors getSuggestedEditsForAdmin()'s shape just above the
+ * Reviews section.
+ */
+export async function getAccessRequestsForAdmin(
+  filters: { status?: AccessRequestStatus } = {}
+): Promise<(AccessRequestDTO & { opportunityName: string; opportunityType: OpportunityType })[]> {
+  const conditions = filters.status ? [eq(accessRequests.status, filters.status)] : [];
+  const rows = await db
+    .select({
+      request: accessRequests,
+      opportunityName: opportunities.name,
+      opportunityType: opportunities.type,
+    })
+    .from(accessRequests)
+    .innerJoin(opportunities, eq(accessRequests.opportunityId, opportunities.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(accessRequests.createdAt));
+  return rows.map((r) => ({
+    ...toAccessRequestDTO(r.request),
+    opportunityName: r.opportunityName,
+    opportunityType: r.opportunityType,
+  }));
+}
+
 export interface MagicLinkDTO {
   id: number;
   opportunityId: number;

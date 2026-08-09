@@ -1,21 +1,30 @@
 // Minimal admin panel: pending reviews queue + reports/disputes queue +
 // pending links queue (additional org links beyond "how to apply") + pending
 // icons queue (org profile icon submissions) + suggested edits queue
-// (single-field correction proposals against existing listings). It does not
-// attempt to build out opportunity-approval UI (that queue already has a
-// working API at GET/POST /api/admin/opportunities/* but no frontend; out of
-// scope here).
+// (single-field correction proposals against existing listings) + club/VIP
+// leader access requests queue (module 4 of 7 of the leader-access
+// feature). It does not attempt to build out opportunity-approval UI (that
+// queue already has a working API at GET/POST /api/admin/opportunities/*
+// but no frontend; out of scope here), nor the leader edit UI (module 5) or
+// revocation controls (module 6) — this panel only reviews/approves/denies
+// access requests and issues claim links.
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports | links | icons | suggestedEdits
+  tab: "reviews", // reviews | reports | links | icons | suggestedEdits | accessRequests
   reviews: [],
   reports: [],
   links: [],
   icons: [],
   suggestedEdits: [],
+  accessRequests: [],
+  // Freshly-issued claim links, keyed by access_request id (or "resend" for
+  // the standalone resend-claim-link form below) — shown once, per the
+  // backend's "raw token returned exactly once" contract, then cleared if
+  // the queue reloads.
+  claimLinks: {},
   guidance: "",
   loading: false,
   error: "",
@@ -67,12 +76,13 @@ async function login(username, password) {
 async function loadQueues() {
   setState({ loading: true, error: "" });
   try {
-    const [reviewsRes, reportsRes, linksRes, iconsRes, suggestedEditsRes] = await Promise.all([
+    const [reviewsRes, reportsRes, linksRes, iconsRes, suggestedEditsRes, accessRequestsRes] = await Promise.all([
       apiFetch("/admin/reviews?status=pending"),
       apiFetch("/admin/reports?status=open"),
       apiFetch("/admin/links?status=pending"),
       apiFetch("/admin/icons/pending"),
       apiFetch("/admin/suggested-edits?status=pending"),
+      apiFetch("/admin/access-requests?status=pending"),
     ]);
     setState({
       reviews: reviewsRes.results,
@@ -81,6 +91,7 @@ async function loadQueues() {
       links: linksRes.results,
       icons: iconsRes.results,
       suggestedEdits: suggestedEditsRes.results,
+      accessRequests: accessRequestsRes.results,
       loading: false,
     });
   } catch (err) {
@@ -167,6 +178,90 @@ async function rejectSuggestedEdit(id) {
   } catch (err) {
     setState({ error: err.message });
   }
+}
+
+// ---- Leader access requests (module 4 of 7) ----
+// Approve/deny do NOT immediately drop the row from the queue the way the
+// other tabs' actions do — approving mints a one-time claim link that has
+// to stay visible (with a copy affordance) until the admin has copied it
+// out, so `loadQueues()` is deliberately NOT called right after approve
+// (it would refetch status=pending and the now-approved row would vanish
+// along with the link still shown for it). Deny has no link to show, so it
+// does refresh immediately.
+async function approveAccessRequest(id) {
+  try {
+    setState({ error: "" });
+    const data = await apiFetch(`/admin/access-requests/${id}/approve`, { method: "POST" });
+    setState({
+      claimLinks: { ...state.claimLinks, [id]: data },
+      accessRequests: state.accessRequests.map((r) => (r.id === id ? { ...r, status: "approved" } : r)),
+    });
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function denyAccessRequest(id) {
+  try {
+    await apiFetch(`/admin/access-requests/${id}/deny`, { method: "POST" });
+    loadQueues();
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+// `rawOpportunityId` is read directly from the input at click time (not
+// tracked reactively in `state`) — every setState() call replaces
+// #app.innerHTML wholesale, which would blow away focus/cursor position on
+// every keystroke if this field re-rendered from state on each `input`
+// event.
+async function resendClaimLink(rawOpportunityId) {
+  const opportunityId = Number(rawOpportunityId);
+  if (!Number.isInteger(opportunityId) || opportunityId <= 0) {
+    setState({ error: "Enter a valid opportunity id to resend a claim link." });
+    return;
+  }
+  try {
+    setState({ error: "" });
+    const data = await apiFetch(`/admin/opportunities/${opportunityId}/resend-claim-link`, { method: "POST" });
+    setState({ claimLinks: { ...state.claimLinks, resend: data } });
+  } catch (err) {
+    setState({ error: err.message });
+  }
+}
+
+async function copyClaimLink(rawPath, buttonEl) {
+  const fullUrl = `${window.location.origin}${rawPath}`;
+  try {
+    await navigator.clipboard.writeText(fullUrl);
+    if (buttonEl) {
+      const original = buttonEl.textContent;
+      buttonEl.textContent = "Copied!";
+      setTimeout(() => {
+        buttonEl.textContent = original;
+      }, 1500);
+    }
+  } catch {
+    // Clipboard API can be unavailable (non-HTTPS context, permissions
+    // denied, older browser) — the link text is already selectable in the
+    // adjacent <input readonly>, so this failure is silent by design; the
+    // admin can select-and-copy manually instead.
+  }
+}
+
+function renderClaimLinkBox(claimLinkData, keyForCopyBtn) {
+  if (!claimLinkData) return "";
+  const fullUrl = `${window.location.origin}${claimLinkData.claimLinkPath}`;
+  return `
+    <div class="claim-link-box">
+      <div class="claim-link-box-label">Claim link — copy and send this to the requester now</div>
+      <div class="claim-link-box-row">
+        <input type="text" readonly value="${escapeHtml(fullUrl)}" onclick="this.select()" />
+        <button type="button" class="admin-btn secondary" data-action="copy-claim-link" data-path="${escapeHtml(claimLinkData.claimLinkPath)}" data-key="${escapeHtml(keyForCopyBtn)}">Copy</button>
+      </div>
+      <div class="claim-link-box-note">Expires ${escapeHtml((claimLinkData.expiresAt || "").slice(0, 16))} UTC · single-use · not stored anywhere else — this is the only time it's shown.</div>
+    </div>
+  `;
 }
 
 function renderLogin() {
@@ -342,6 +437,57 @@ function renderSuggestedEditsTab() {
     .join("");
 }
 
+function renderAccessRequestsTab() {
+  const resendBox = `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-title">Resend a claim link</div>
+      <div class="admin-queue-item-meta" style="margin:6px 0 10px;">
+        For an org whose first claim link expired unused (no pending request needed). Blocked if the
+        opportunity already has active leader access — see backend guard.
+      </div>
+      <div class="claim-link-box-row">
+        <input type="text" id="resendOpportunityId" placeholder="Opportunity id"
+          style="max-width:160px;font-family:monospace;padding:8px 10px;border-radius:6px;border:1.5px solid var(--pi-mile);" />
+        <button type="button" class="admin-btn secondary" data-action="resend-claim-link">Generate link</button>
+      </div>
+      ${renderClaimLinkBox(state.claimLinks.resend, "resend")}
+    </div>
+  `;
+
+  if (state.accessRequests.length === 0) {
+    return `${resendBox}<div class="review-empty">No pending access requests.</div>`;
+  }
+
+  const rows = state.accessRequests
+    .map((r) => {
+      const claimData = state.claimLinks[r.id];
+      const alreadyDecided = r.status !== "pending";
+      return `
+    <div class="admin-queue-item">
+      <div class="admin-queue-item-head">
+        <div class="admin-queue-item-title">${escapeHtml(r.opportunityName)} <span class="admin-queue-item-meta">(${escapeHtml(r.opportunityType)} · opportunity #${r.opportunityId})</span></div>
+        <div class="admin-queue-item-meta">${escapeHtml((r.createdAt || "").slice(0, 16))}</div>
+      </div>
+      <div class="review-card-row"><div class="review-card-q">Requester</div><div class="review-card-a">${escapeHtml(r.requesterName)}</div></div>
+      <div class="review-card-row"><div class="review-card-q">Contact</div><div class="review-card-a">${escapeHtml(r.requesterContact)}</div></div>
+      ${r.note ? `<div class="review-card-row"><div class="review-card-q">Note</div><div class="review-card-a">${escapeHtml(r.note)}</div></div>` : ""}
+      ${
+        alreadyDecided
+          ? `<div class="admin-queue-item-meta" style="margin-top:10px;">Status: ${escapeHtml(r.status)}</div>`
+          : `<div class="admin-queue-actions">
+               <button class="admin-btn approve" data-action="approve-access-request" data-id="${r.id}">Approve</button>
+               <button class="admin-btn deny" data-action="deny-access-request" data-id="${r.id}">Deny</button>
+             </div>`
+      }
+      ${renderClaimLinkBox(claimData, String(r.id))}
+    </div>
+  `;
+    })
+    .join("");
+
+  return resendBox + rows;
+}
+
 function renderDashboard() {
   return `
     <main class="view-admin">
@@ -352,6 +498,7 @@ function renderDashboard() {
         <button class="${state.tab === "links" ? "active" : ""}" data-action="tab-links">Links (${state.links.length})</button>
         <button class="${state.tab === "icons" ? "active" : ""}" data-action="tab-icons">Pending Icons (${state.icons.length})</button>
         <button class="${state.tab === "suggestedEdits" ? "active" : ""}" data-action="tab-suggested-edits">Suggested Edits (${state.suggestedEdits.length})</button>
+        <button class="${state.tab === "accessRequests" ? "active" : ""}" data-action="tab-access-requests">Access Requests (${state.accessRequests.length})</button>
       </div>
       ${
         state.tab === "reviews"
@@ -362,6 +509,8 @@ function renderDashboard() {
           ? `<div class="admin-guidance">Additional org links (apply-adjacent, homepage, social, other) submitted either standalone or alongside a new org submission. Approve only links that look legitimate and match the organization.</div>`
           : state.tab === "icons"
           ? `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
+          : state.tab === "accessRequests"
+          ? `<div class="admin-guidance">Club/VIP leader access requests. Approving mints a one-time claim link — copy it and send it to the requester via the contact info shown (no automatic email/SMS delivery exists). Denying just closes the request; the org can file a new one.</div>`
           : `<div class="admin-guidance">Anonymous corrections proposed for a single field on an existing listing. Approving writes the new value directly onto the live listing (and refreshes search); rejecting leaves the listing untouched.</div>`
       }
       ${state.error ? `<div class="form-error" style="margin-bottom:14px;">${escapeHtml(state.error)}</div>` : ""}
@@ -376,6 +525,8 @@ function renderDashboard() {
           ? renderLinksTab()
           : state.tab === "icons"
           ? renderIconsTab()
+          : state.tab === "accessRequests"
+          ? renderAccessRequestsTab()
           : renderSuggestedEditsTab()
       }
     </main>
@@ -452,6 +603,23 @@ function wireEvents() {
         break;
       case "reject-suggested-edit":
         rejectSuggestedEdit(Number(node.dataset.id));
+        break;
+      case "tab-access-requests":
+        setState({ tab: "accessRequests" });
+        break;
+      case "approve-access-request":
+        approveAccessRequest(Number(node.dataset.id));
+        break;
+      case "deny-access-request":
+        denyAccessRequest(Number(node.dataset.id));
+        break;
+      case "resend-claim-link": {
+        const input = el("#resendOpportunityId");
+        resendClaimLink(input ? input.value : "");
+        break;
+      }
+      case "copy-claim-link":
+        copyClaimLink(node.dataset.path, node);
         break;
     }
   });
