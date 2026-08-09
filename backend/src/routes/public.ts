@@ -6,11 +6,7 @@ import { uploadIcon, ALLOWED_ICON_MIME_TYPES, MAX_ICON_UPLOAD_BYTES } from "../l
 import {
   getPublic,
   getAllTags,
-  getApprovedReviews,
-  getApprovedReviewById,
   getRelatedOpportunities,
-  insertReview,
-  insertReport,
   submitIconPending,
   getApprovedLinks,
   insertLinkSubmission,
@@ -18,8 +14,8 @@ import {
   SUGGESTABLE_FIELDS,
   type SuggestableField,
 } from "../db/data-access.js";
-import type { OpportunityType, ReportCategory, LinkType } from "../db/schema.js";
-import { REPORT_CATEGORIES, LINK_TYPES } from "../db/schema.js";
+import type { OpportunityType, LinkType } from "../db/schema.js";
+import { LINK_TYPES } from "../db/schema.js";
 
 const VALID_TYPES: OpportunityType[] = ["vip", "lab", "club"];
 
@@ -74,10 +70,9 @@ publicRouter.get("/opportunities/:id", async (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  const reviews = await getApprovedReviews(id);
   const links = await getApprovedLinks(id);
   const relatedOrgs = await getRelatedOpportunities(id);
-  res.json({ result: { ...result, reviews, links, relatedOrgs } });
+  res.json({ result: { ...result, links, relatedOrgs } });
 });
 
 // Public icon submission for an EXISTING (public/approved) opportunity —
@@ -127,50 +122,6 @@ publicRouter.get("/tags", async (_req, res) => {
   res.json({ results });
 });
 
-// Public review submission — anonymous, no auth, no rating field. Creates
-// a pending review; only visible publicly once an admin approves it (see
-// getApprovedReviews() in data-access.ts).
-publicRouter.post("/opportunities/:id/reviews", async (req, res) => {
-  const opportunityId = Number(req.params.id);
-  if (!Number.isInteger(opportunityId)) {
-    res.status(404).json({ error: "not_found" });
-    return;
-  }
-  // Confirm the opportunity is publicly visible before accepting a review
-  // for it (avoids leaking existence of pending/rejected rows via 201s).
-  const publicOpportunities = await getPublic();
-  const opp = publicOpportunities.find((r) => r.id === opportunityId);
-  if (!opp) {
-    res.status(404).json({ error: "not_found" });
-    return;
-  }
-
-  const body = req.body ?? {};
-  const details: string[] = [];
-  if (typeof body.timeCommitment !== "string" || body.timeCommitment.trim() === "") {
-    details.push("timeCommitment is required");
-  }
-  if (typeof body.beforeApplying !== "string" || body.beforeApplying.trim() === "") {
-    details.push("beforeApplying is required");
-  }
-  if (typeof body.adviceNewMember !== "string" || body.adviceNewMember.trim() === "") {
-    details.push("adviceNewMember is required");
-  }
-  if (details.length > 0) {
-    res.status(400).json({ error: "validation_error", details });
-    return;
-  }
-
-  const id = await insertReview({
-    opportunityId,
-    timeCommitment: body.timeCommitment.trim(),
-    beforeApplying: body.beforeApplying.trim(),
-    adviceNewMember: body.adviceNewMember.trim(),
-  });
-
-  res.status(201).json({ result: { id, status: "pending" } });
-});
-
 // Public submission of an ADDITIONAL link (beyond opportunities.link, the
 // primary "how to apply" link) — e.g. a homepage, social, or another
 // apply-adjacent link. Creates a pending link; only visible publicly once
@@ -216,38 +167,6 @@ publicRouter.post("/opportunities/:id/links", async (req, res) => {
   });
 
   res.status(201).json({ result: { id, status: "pending" } });
-});
-
-// Public dispute/flag path for a specific published review — extends the
-// reports mechanism (reports.reviewId). No auth required (a PI/advisor/club
-// leader flagging a review doesn't need an account).
-publicRouter.post("/reviews/:id/report", async (req, res) => {
-  const reviewId = req.params.id;
-  const review = await getApprovedReviewById(reviewId);
-  if (!review) {
-    res.status(404).json({ error: "not_found" });
-    return;
-  }
-
-  const body = req.body ?? {};
-  const category = typeof body.category === "string" ? (body.category as ReportCategory) : undefined;
-  if (!category || !REPORT_CATEGORIES.includes(category)) {
-    res.status(400).json({
-      error: "validation_error",
-      details: [`category is required and must be one of ${REPORT_CATEGORIES.join("|")}`],
-    });
-    return;
-  }
-
-  const id = await insertReport({
-    opportunityId: review.opportunityId,
-    reviewId,
-    category,
-    details: typeof body.details === "string" ? body.details : "",
-    reporterContact: typeof body.reporterContact === "string" ? body.reporterContact : null,
-  });
-
-  res.status(201).json({ result: { id, status: "open" } });
 });
 
 // Public "suggest an edit" path for a single field on an existing, publicly

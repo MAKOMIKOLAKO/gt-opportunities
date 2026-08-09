@@ -857,45 +857,15 @@ main {
 }
 .related-org-chip:hover { background: oklch(90% 0.03 200 / 0.6); }
 
-/* ---------- Reviews (Addition 3) ---------- */
-
-.reviews-block { margin: 0; }
-.reviews-block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.reviews-block-head h2 { font-family: var(--pub-serif); font-size: 17px; font-weight: 600; color: var(--pub-ink); margin: 0; }
-.review-write-btn {
-  border: none;
-  background: var(--pub-accent);
-  color: #fff;
-  padding: 10px 16px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.review-list { display: flex; flex-direction: column; gap: 12px; }
-.review-card {
-  background: #fff;
-  border: 1px solid var(--pub-card-border);
-  border-radius: 12px;
-  padding: 16px 18px;
-}
+/* .review-card-row/-q/-a and .review-empty are shared, generically-named
+   labeled-row styles — also used by the admin queue UI (links/suggested-
+   edits tabs, frontend/public/admin.js) — kept even though the reviews
+   feature itself (write/read a review, flag a review) is gone. */
 .review-card-row { margin-bottom: 10px; }
 .review-card-row:last-of-type { margin-bottom: 0; }
-.review-card-q { font-size: 11px; font-weight: 700; color: var(--pub-ink-soft); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 3px; }
-.review-card-a { font-size: 13.5px; color: var(--pub-ink); line-height: 1.5; }
-.review-card-footer { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; }
-.review-card-date { font-size: 11px; color: var(--pub-ink-soft); }
-.review-flag-btn {
-  background: none;
-  border: none;
-  color: var(--pub-ink-soft);
-  font-size: 11.5px;
-  cursor: pointer;
-  text-decoration: underline;
-  padding: 0;
-}
-.review-flag-btn:hover { color: #9c2b23; }
-.review-empty { font-size: 13px; color: var(--pub-ink-soft); }
+.review-card-q { font-size: 11px; font-weight: 700; color: var(--gray-matter); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 3px; }
+.review-card-a { font-size: 13.5px; color: var(--ink); line-height: 1.5; }
+.review-empty { font-size: 13px; color: var(--gray-matter); }
 
 .review-form-modal-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.45);
@@ -919,7 +889,7 @@ main {
   padding: 10px 16px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 
-/* ---------- Detail tabs (About / How to Apply / Reviews) ---------- */
+/* ---------- Detail tabs (About / How to Apply) ---------- */
 
 .detail-tabs {
   display: flex;
@@ -946,7 +916,7 @@ main {
    block above); these are the diff/badge styles used to render suggested
    edits in the admin review queue. */
 
-/* ---------- Admin (Addition 3: reviews + reports queues; suggested edits) ---------- */
+/* ---------- Admin (links/icons/suggested-edits moderation queues) ---------- */
 
 .view-admin { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
 .admin-login-form { max-width: 360px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
@@ -1096,9 +1066,7 @@ main {
   .propose-edit-btn,
   .add-link-row-btn,
   .submit-again-btn,
-  .review-write-btn,
   .review-form-cancel-btn,
-  .review-flag-btn,
   .detail-tab-btn,
   .related-org-chip,
   .detail-breadcrumbs button {

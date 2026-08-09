@@ -257,7 +257,7 @@ ${breadcrumbNav(breadcrumbItems)}
   <p>${opp.link ? `Visit the <a href="${escapeHtml(opp.link)}" rel="noopener">official page</a> to apply or learn more.` : "Contact information is not yet available for this listing."}</p>
   ${extraLinks}
   ${relatedHtml}
-  <p class="ssr-app-link"><a href="/?opportunity=${opp.id}">Leave a review or suggest an edit in the interactive app →</a></p>
+  <p class="ssr-app-link"><a href="/?opportunity=${opp.id}">Suggest an edit in the interactive app →</a></p>
 </article>
 </main>
 ${siteFooterHtml()}`;

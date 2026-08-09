@@ -1,22 +1,18 @@
-// Minimal admin panel: pending reviews queue + reports/disputes queue +
-// pending links queue (additional org links beyond "how to apply") + pending
-// icons queue (org profile icon submissions) + suggested edits queue
-// (single-field correction proposals against existing listings). It does not
-// attempt to build out opportunity-approval UI (that queue already has a
-// working API at GET/POST /api/admin/opportunities/* but no frontend; out of
-// scope here).
+// Minimal admin panel: pending links queue (additional org links beyond
+// "how to apply") + pending icons queue (org profile icon submissions) +
+// suggested edits queue (single-field correction proposals against
+// existing listings). It does not attempt to build out opportunity-approval
+// UI (that queue already has a working API at GET/POST
+// /api/admin/opportunities/* but no frontend; out of scope here).
 const API_BASE = "/api";
 const el = (sel, root = document) => root.querySelector(sel);
 
 const state = {
   token: sessionStorage.getItem("gt_admin_token") || null,
-  tab: "reviews", // reviews | reports | links | icons | suggestedEdits
-  reviews: [],
-  reports: [],
+  tab: "links", // links | icons | suggestedEdits
   links: [],
   icons: [],
   suggestedEdits: [],
-  guidance: "",
   loading: false,
   error: "",
 };
@@ -67,17 +63,12 @@ async function login(username, password) {
 async function loadQueues() {
   setState({ loading: true, error: "" });
   try {
-    const [reviewsRes, reportsRes, linksRes, iconsRes, suggestedEditsRes] = await Promise.all([
-      apiFetch("/admin/reviews?status=pending"),
-      apiFetch("/admin/reports?status=open"),
+    const [linksRes, iconsRes, suggestedEditsRes] = await Promise.all([
       apiFetch("/admin/links?status=pending"),
       apiFetch("/admin/icons/pending"),
       apiFetch("/admin/suggested-edits?status=pending"),
     ]);
     setState({
-      reviews: reviewsRes.results,
-      guidance: reviewsRes.guidance || "",
-      reports: reportsRes.results,
       links: linksRes.results,
       icons: iconsRes.results,
       suggestedEdits: suggestedEditsRes.results,
@@ -85,33 +76,6 @@ async function loadQueues() {
     });
   } catch (err) {
     setState({ loading: false, error: err.message });
-  }
-}
-
-async function approveReview(id) {
-  try {
-    await apiFetch(`/admin/reviews/${id}/approve`, { method: "POST" });
-    loadQueues();
-  } catch (err) {
-    setState({ error: err.message });
-  }
-}
-
-async function rejectReview(id) {
-  try {
-    await apiFetch(`/admin/reviews/${id}/reject`, { method: "POST" });
-    loadQueues();
-  } catch (err) {
-    setState({ error: err.message });
-  }
-}
-
-async function resolveReport(id) {
-  try {
-    await apiFetch(`/admin/reports/${id}/resolve`, { method: "POST" });
-    loadQueues();
-  } catch (err) {
-    setState({ error: err.message });
   }
 }
 
@@ -185,57 +149,6 @@ function renderLogin() {
       </p>
     </main>
   `;
-}
-
-function renderReviewsTab() {
-  if (state.reviews.length === 0) {
-    return `<div class="review-empty">No pending reviews.</div>`;
-  }
-  return state.reviews
-    .map(
-      (r) => `
-    <div class="admin-queue-item">
-      <div class="admin-queue-item-head">
-        <div class="admin-queue-item-title">${escapeHtml(r.opportunityName)} <span class="admin-queue-item-meta">(opportunity #${r.opportunityId})</span></div>
-        <div class="admin-queue-item-meta">${escapeHtml((r.createdAt || "").slice(0, 16))}</div>
-      </div>
-      <div class="review-card-row"><div class="review-card-q">Time commitment</div><div class="review-card-a">${escapeHtml(r.timeCommitment)}</div></div>
-      <div class="review-card-row"><div class="review-card-q">Before applying</div><div class="review-card-a">${escapeHtml(r.beforeApplying)}</div></div>
-      <div class="review-card-row"><div class="review-card-q">Advice for a new member</div><div class="review-card-a">${escapeHtml(r.adviceNewMember)}</div></div>
-      <div class="admin-queue-actions">
-        <button class="admin-btn approve" data-action="approve-review" data-id="${escapeHtml(r.id)}">Approve</button>
-        <button class="admin-btn reject" data-action="reject-review" data-id="${escapeHtml(r.id)}">Reject</button>
-      </div>
-    </div>
-  `
-    )
-    .join("");
-}
-
-function renderReportsTab() {
-  if (state.reports.length === 0) {
-    return `<div class="review-empty">No open reports.</div>`;
-  }
-  return state.reports
-    .map(
-      (r) => `
-    <div class="admin-queue-item">
-      <div class="admin-queue-item-head">
-        <div class="admin-queue-item-title">
-          ${r.reviewId ? `Review dispute — review ${escapeHtml(r.reviewId.slice(0, 8))}&hellip;` : "Opportunity report"}
-          ${r.opportunityId ? `<span class="admin-queue-item-meta">(opportunity #${r.opportunityId})</span>` : ""}
-        </div>
-        <div class="admin-queue-item-meta">${escapeHtml((r.createdAt || "").slice(0, 16))}</div>
-      </div>
-      <div class="review-card-row"><div class="review-card-q">Category</div><div class="review-card-a">${escapeHtml(r.category)}</div></div>
-      ${r.details ? `<div class="review-card-row"><div class="review-card-q">Details</div><div class="review-card-a">${escapeHtml(r.details)}</div></div>` : ""}
-      <div class="admin-queue-actions">
-        <button class="admin-btn resolve" data-action="resolve-report" data-id="${r.id}">Mark resolved</button>
-      </div>
-    </div>
-  `
-    )
-    .join("");
 }
 
 function renderLinksTab() {
@@ -347,18 +260,12 @@ function renderDashboard() {
     <main class="view-admin">
       <h1 style="font-size:22px;font-weight:800;color:var(--navy);margin-bottom:16px;">Moderation queue</h1>
       <div class="admin-tabs">
-        <button class="${state.tab === "reviews" ? "active" : ""}" data-action="tab-reviews">Reviews (${state.reviews.length})</button>
-        <button class="${state.tab === "reports" ? "active" : ""}" data-action="tab-reports">Reports / Disputes (${state.reports.length})</button>
         <button class="${state.tab === "links" ? "active" : ""}" data-action="tab-links">Links (${state.links.length})</button>
         <button class="${state.tab === "icons" ? "active" : ""}" data-action="tab-icons">Pending Icons (${state.icons.length})</button>
         <button class="${state.tab === "suggestedEdits" ? "active" : ""}" data-action="tab-suggested-edits">Suggested Edits (${state.suggestedEdits.length})</button>
       </div>
       ${
-        state.tab === "reviews"
-          ? `<div class="admin-guidance"><strong>Moderation guidance for reviews:</strong> ${escapeHtml(state.guidance)}</div>`
-          : state.tab === "reports"
-          ? `<div class="admin-guidance">General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go back to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself.</div>`
-          : state.tab === "links"
+        state.tab === "links"
           ? `<div class="admin-guidance">Additional org links (apply-adjacent, homepage, social, other) submitted either standalone or alongside a new org submission. Approve only links that look legitimate and match the organization.</div>`
           : state.tab === "icons"
           ? `<div class="admin-guidance">Compare the current live icon (if any) against the submitted icon before approving. Approve promotes the submitted icon to live; reject discards it without touching the live icon.</div>`
@@ -368,10 +275,6 @@ function renderDashboard() {
       ${
         state.loading
           ? `<div class="state-msg">Loading&hellip;</div>`
-          : state.tab === "reviews"
-          ? renderReviewsTab()
-          : state.tab === "reports"
-          ? renderReportsTab()
           : state.tab === "links"
           ? renderLinksTab()
           : state.tab === "icons"
@@ -411,12 +314,6 @@ function wireEvents() {
     const node = e.target.closest("[data-action]");
     if (!node) return;
     switch (node.dataset.action) {
-      case "tab-reviews":
-        setState({ tab: "reviews" });
-        break;
-      case "tab-reports":
-        setState({ tab: "reports" });
-        break;
       case "tab-links":
         setState({ tab: "links" });
         break;
@@ -425,15 +322,6 @@ function wireEvents() {
         break;
       case "tab-suggested-edits":
         setState({ tab: "suggestedEdits" });
-        break;
-      case "approve-review":
-        approveReview(node.dataset.id);
-        break;
-      case "reject-review":
-        rejectReview(node.dataset.id);
-        break;
-      case "resolve-report":
-        resolveReport(Number(node.dataset.id));
         break;
       case "approve-link":
         approveLink(Number(node.dataset.id));
