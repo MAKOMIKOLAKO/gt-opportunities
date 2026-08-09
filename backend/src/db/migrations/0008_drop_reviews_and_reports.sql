@@ -1,2 +1,2 @@
-DROP TABLE "reports" CASCADE;--> statement-breakpoint
-DROP TABLE "reviews" CASCADE;
+DROP TABLE IF EXISTS "reports" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "reviews" CASCADE;
