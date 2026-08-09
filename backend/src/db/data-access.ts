@@ -19,6 +19,11 @@ import {
   links,
   relatedOpportunities,
   suggestedEdits,
+  opportunityAccess,
+  accessRequests,
+  magicLinks,
+  sessions,
+  auditLog,
   type OpportunityType,
   type OpportunityStatus,
   type ReviewStatus,
@@ -27,6 +32,9 @@ import {
   type LinkType,
   type LinkStatus,
   type SuggestedEditStatus,
+  type AccessStatus,
+  type AccessRequestStatus,
+  type MagicLinkPurpose,
 } from "./schema.js";
 import { getMajors, getMeta, setMajors, setMeta, getDetails, buildSearchBlob } from "./json-columns.js";
 import { embedOpportunity } from "../lib/embeddings.js";
@@ -1102,4 +1110,367 @@ export async function rejectSuggestedEdit(id: number, reviewedBy: string): Promi
     .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
     .where(eq(suggestedEdits.id, id));
   return toSuggestedEditDTO((await getSuggestedEditById(id))!);
+}
+
+// ---- Club/VIP leader access (Module 1 of 7) ----
+// Pure data layer for the shared-account-per-org leader access feature: no
+// HTTP routes, no token generation/hashing, no business logic — just typed
+// CRUD over the six tables added in schema.ts (opportunity_access,
+// access_requests, magic_links, sessions, audit_log). Token/session
+// generation and route-level auth enforcement belong to later modules; every
+// function below trusts its caller to have already produced/verified
+// whatever it's passed (e.g. `tokenHash` is assumed to already be a SHA-256
+// hex hash, never a raw token).
+
+export interface AccessRequestDTO {
+  id: number;
+  opportunityId: number;
+  requesterName: string;
+  requesterContact: string;
+  note: string | null;
+  status: AccessRequestStatus;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+function toAccessRequestDTO(r: typeof accessRequests.$inferSelect): AccessRequestDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    requesterName: r.requesterName,
+    requesterContact: r.requesterContact,
+    note: r.note,
+    status: r.status,
+    createdAt: r.createdAt,
+    reviewedAt: r.reviewedAt,
+  };
+}
+
+export interface AccessRequestInput {
+  opportunityId: number;
+  requesterName: string;
+  requesterContact: string;
+  note?: string | null;
+}
+
+/** Creates a pending access_requests row. Does not touch opportunity_access. */
+export async function createAccessRequest(input: AccessRequestInput): Promise<AccessRequestDTO> {
+  const [row] = await db
+    .insert(accessRequests)
+    .values({
+      opportunityId: input.opportunityId,
+      requesterName: input.requesterName,
+      requesterContact: input.requesterContact,
+      note: input.note ?? null,
+      status: "pending",
+    })
+    .returning();
+  return toAccessRequestDTO(row);
+}
+
+/** Fetches a single access_requests row by id, or null if not found. */
+export async function getAccessRequest(id: number): Promise<AccessRequestDTO | null> {
+  const rows = await db.select().from(accessRequests).where(eq(accessRequests.id, id));
+  return rows.length ? toAccessRequestDTO(rows[0]) : null;
+}
+
+/** Lists all access_requests for one opportunity, optionally filtered by status, most-recent-first. */
+export async function listAccessRequestsForOpportunity(
+  opportunityId: number,
+  filters: { status?: AccessRequestStatus } = {}
+): Promise<AccessRequestDTO[]> {
+  const conditions = [eq(accessRequests.opportunityId, opportunityId)];
+  if (filters.status) conditions.push(eq(accessRequests.status, filters.status));
+  const rows = await db
+    .select()
+    .from(accessRequests)
+    .where(and(...conditions))
+    .orderBy(desc(accessRequests.createdAt));
+  return rows.map(toAccessRequestDTO);
+}
+
+/** Updates an access_requests row's status, stamping reviewedAt. Returns null if not found. */
+export async function updateAccessRequestStatus(
+  id: number,
+  status: AccessRequestStatus
+): Promise<AccessRequestDTO | null> {
+  const existing = await getAccessRequest(id);
+  if (!existing) return null;
+  await db
+    .update(accessRequests)
+    .set({ status, reviewedAt: sql`now()` })
+    .where(eq(accessRequests.id, id));
+  return getAccessRequest(id);
+}
+
+export interface OpportunityAccessDTO {
+  id: number;
+  opportunityId: number;
+  status: AccessStatus;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+function toOpportunityAccessDTO(r: typeof opportunityAccess.$inferSelect): OpportunityAccessDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    status: r.status,
+    createdAt: r.createdAt,
+    revokedAt: r.revokedAt,
+  };
+}
+
+/** Creates a new opportunity_access row (defaults to status='active'). Does not dedupe against existing rows for the same opportunity — callers should check getActiveAccessForOpportunity() first if a single shared row is desired. */
+export async function createOpportunityAccess(opportunityId: number): Promise<OpportunityAccessDTO> {
+  const [row] = await db.insert(opportunityAccess).values({ opportunityId, status: "active" }).returning();
+  return toOpportunityAccessDTO(row);
+}
+
+/** Fetches the most recently created opportunity_access row for an opportunity, regardless of status, or null if none exists. */
+export async function getOpportunityAccess(opportunityId: number): Promise<OpportunityAccessDTO | null> {
+  const rows = await db
+    .select()
+    .from(opportunityAccess)
+    .where(eq(opportunityAccess.opportunityId, opportunityId))
+    .orderBy(desc(opportunityAccess.createdAt));
+  return rows.length ? toOpportunityAccessDTO(rows[0]) : null;
+}
+
+/** Flips an opportunity_access row's status (active <-> revoked), stamping revokedAt when revoking. Returns null if not found. */
+export async function setOpportunityAccessStatus(
+  id: number,
+  status: AccessStatus
+): Promise<OpportunityAccessDTO | null> {
+  const rows = await db.select().from(opportunityAccess).where(eq(opportunityAccess.id, id));
+  if (rows.length === 0) return null;
+  await db
+    .update(opportunityAccess)
+    .set({ status, revokedAt: status === "revoked" ? sql`now()` : null })
+    .where(eq(opportunityAccess.id, id));
+  const updated = await db.select().from(opportunityAccess).where(eq(opportunityAccess.id, id));
+  return toOpportunityAccessDTO(updated[0]);
+}
+
+/** Helper: the currently-active opportunity_access row for an opportunity, or null if none/all revoked. */
+export async function getActiveAccessForOpportunity(opportunityId: number): Promise<OpportunityAccessDTO | null> {
+  const rows = await db
+    .select()
+    .from(opportunityAccess)
+    .where(and(eq(opportunityAccess.opportunityId, opportunityId), eq(opportunityAccess.status, "active" as const)))
+    .orderBy(desc(opportunityAccess.createdAt));
+  return rows.length ? toOpportunityAccessDTO(rows[0]) : null;
+}
+
+/** Helper: true if the opportunity currently has an active opportunity_access row. */
+export async function hasActiveAccess(opportunityId: number): Promise<boolean> {
+  return (await getActiveAccessForOpportunity(opportunityId)) !== null;
+}
+
+/** Helper: all pending access_requests for an opportunity, most-recent-first. */
+export async function getPendingRequestsForOpportunity(opportunityId: number): Promise<AccessRequestDTO[]> {
+  return listAccessRequestsForOpportunity(opportunityId, { status: "pending" });
+}
+
+export interface MagicLinkDTO {
+  id: number;
+  opportunityId: number;
+  tokenHash: string;
+  purpose: MagicLinkPurpose;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+}
+
+function toMagicLinkDTO(r: typeof magicLinks.$inferSelect): MagicLinkDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    tokenHash: r.tokenHash,
+    purpose: r.purpose,
+    expiresAt: r.expiresAt,
+    usedAt: r.usedAt,
+    createdAt: r.createdAt,
+  };
+}
+
+export interface MagicLinkInput {
+  opportunityId: number;
+  tokenHash: string;
+  purpose: MagicLinkPurpose;
+  expiresAt: string;
+}
+
+/** Creates a magic_links row. `tokenHash` must already be the SHA-256 hex hash of the raw token — hashing is not this module's job. */
+export async function createMagicLink(input: MagicLinkInput): Promise<MagicLinkDTO> {
+  const [row] = await db
+    .insert(magicLinks)
+    .values({
+      opportunityId: input.opportunityId,
+      tokenHash: input.tokenHash,
+      purpose: input.purpose,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  return toMagicLinkDTO(row);
+}
+
+/** Looks up a magic_links row by its token hash (unique). Callers are responsible for checking expiresAt/usedAt themselves. */
+export async function getMagicLinkByTokenHash(tokenHash: string): Promise<MagicLinkDTO | null> {
+  const rows = await db.select().from(magicLinks).where(eq(magicLinks.tokenHash, tokenHash));
+  return rows.length ? toMagicLinkDTO(rows[0]) : null;
+}
+
+/** Stamps a magic_links row as used (usedAt = now). Returns null if not found. */
+export async function markMagicLinkUsed(id: number): Promise<MagicLinkDTO | null> {
+  const rows = await db.select().from(magicLinks).where(eq(magicLinks.id, id));
+  if (rows.length === 0) return null;
+  await db.update(magicLinks).set({ usedAt: sql`now()` }).where(eq(magicLinks.id, id));
+  const updated = await db.select().from(magicLinks).where(eq(magicLinks.id, id));
+  return toMagicLinkDTO(updated[0]);
+}
+
+export interface SessionDTO {
+  id: number;
+  opportunityId: number;
+  tokenHash: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+}
+
+function toSessionDTO(r: typeof sessions.$inferSelect): SessionDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    tokenHash: r.tokenHash,
+    createdAt: r.createdAt,
+    expiresAt: r.expiresAt,
+    revokedAt: r.revokedAt,
+  };
+}
+
+export interface SessionInput {
+  opportunityId: number;
+  tokenHash: string;
+  expiresAt: string;
+}
+
+/** Creates a sessions row. `tokenHash` must already be the SHA-256 hex hash of the raw session token. */
+export async function createSession(input: SessionInput): Promise<SessionDTO> {
+  const [row] = await db
+    .insert(sessions)
+    .values({
+      opportunityId: input.opportunityId,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+    })
+    .returning();
+  return toSessionDTO(row);
+}
+
+/** Looks up a sessions row by its token hash (unique). Callers are responsible for checking expiresAt/revokedAt themselves. */
+export async function getSessionByTokenHash(tokenHash: string): Promise<SessionDTO | null> {
+  const rows = await db.select().from(sessions).where(eq(sessions.tokenHash, tokenHash));
+  return rows.length ? toSessionDTO(rows[0]) : null;
+}
+
+/** Revokes a single session by id, stamping revokedAt. Returns null if not found. */
+export async function revokeSession(id: number): Promise<SessionDTO | null> {
+  const rows = await db.select().from(sessions).where(eq(sessions.id, id));
+  if (rows.length === 0) return null;
+  await db.update(sessions).set({ revokedAt: sql`now()` }).where(eq(sessions.id, id));
+  const updated = await db.select().from(sessions).where(eq(sessions.id, id));
+  return toSessionDTO(updated[0]);
+}
+
+/** Revokes every currently-unrevoked session for an opportunity (e.g. on access revocation). Returns the count revoked. */
+export async function revokeAllSessionsForOpportunity(opportunityId: number): Promise<number> {
+  const result = await db
+    .update(sessions)
+    .set({ revokedAt: sql`now()` })
+    .where(and(eq(sessions.opportunityId, opportunityId), sql`${sessions.revokedAt} IS NULL`))
+    .returning({ id: sessions.id });
+  return result.length;
+}
+
+/** Lists sessions for an opportunity that are neither revoked nor expired, most-recent-first. */
+export async function listActiveSessionsForOpportunity(opportunityId: number): Promise<SessionDTO[]> {
+  const rows = await db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.opportunityId, opportunityId),
+        sql`${sessions.revokedAt} IS NULL`,
+        sql`${sessions.expiresAt} > now()`
+      )
+    )
+    .orderBy(desc(sessions.createdAt));
+  return rows.map(toSessionDTO);
+}
+
+export interface AuditLogDTO {
+  id: number;
+  opportunityId: number;
+  actor: string;
+  action: string;
+  fieldChanged: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  createdAt: string;
+}
+
+function toAuditLogDTO(r: typeof auditLog.$inferSelect): AuditLogDTO {
+  return {
+    id: r.id,
+    opportunityId: r.opportunityId,
+    actor: r.actor,
+    action: r.action,
+    fieldChanged: r.fieldChanged,
+    oldValue: r.oldValue,
+    newValue: r.newValue,
+    createdAt: r.createdAt,
+  };
+}
+
+export interface AuditLogInput {
+  opportunityId: number;
+  actor: string;
+  action: string;
+  fieldChanged?: string | null;
+  oldValue?: string | null;
+  newValue?: string | null;
+}
+
+/** Append-only: inserts one audit_log row. Never updates/deletes existing rows. */
+export async function appendAuditLog(input: AuditLogInput): Promise<AuditLogDTO> {
+  const [row] = await db
+    .insert(auditLog)
+    .values({
+      opportunityId: input.opportunityId,
+      actor: input.actor,
+      action: input.action,
+      fieldChanged: input.fieldChanged ?? null,
+      oldValue: input.oldValue ?? null,
+      newValue: input.newValue ?? null,
+    })
+    .returning();
+  return toAuditLogDTO(row);
+}
+
+/** Lists audit_log rows for an opportunity, most-recent-first, optionally filtered by actor and/or action. */
+export async function listAuditLogForOpportunity(
+  opportunityId: number,
+  filters: { actor?: string; action?: string } = {}
+): Promise<AuditLogDTO[]> {
+  const conditions = [eq(auditLog.opportunityId, opportunityId)];
+  if (filters.actor) conditions.push(eq(auditLog.actor, filters.actor));
+  if (filters.action) conditions.push(eq(auditLog.action, filters.action));
+  const rows = await db
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt));
+  return rows.map(toAuditLogDTO);
 }
