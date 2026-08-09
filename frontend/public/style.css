@@ -956,6 +956,17 @@ main {
 }
 .state-msg.error { color: #9c2b23; }
 
+/* Infinite-scroll trigger at the bottom of the directory results — normally
+   empty/invisible (just a scroll target for the IntersectionObserver in
+   app.js), shows text only while a page is loading or a fetch failed. */
+.scroll-sentinel {
+  padding: 18px 0;
+  text-align: center;
+  color: var(--gray-matter);
+  font-size: 13px;
+  min-height: 1px;
+}
+
 /* ---------- Footer ---------- */
 
 .gt-footer {

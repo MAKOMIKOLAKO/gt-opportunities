@@ -5,6 +5,7 @@ import multer from "multer";
 import { uploadIcon, ALLOWED_ICON_MIME_TYPES, MAX_ICON_UPLOAD_BYTES } from "../lib/storage.js";
 import {
   getPublic,
+  getPublicPage,
   getAllTags,
   getApprovedReviews,
   getApprovedReviewById,
@@ -49,17 +50,38 @@ function handleIconUpload(req: express.Request, res: express.Response, next: exp
   });
 }
 
+// Paginated (module: homepage load-time fix, see data-access.ts::getPublicPage
+// for why). limit/offset are optional so any existing integration that
+// omitted them keeps working, just capped to the first page (limit defaults
+// to 30, matching the frontend's PAGE_SIZE in app.js) rather than silently
+// reverting to the old "return everything" behavior — a caller that
+// actually wants everything should use limit=<a big number> explicitly (or,
+// server-side, getPublic() directly, which several other routes still do).
+// Cached at the edge for a short window for the same reason /org/:slug is:
+// this reads the same live, leader-editable table, so a long cache would
+// show stale data, but s-maxage=30 means a burst of homepage traffic on one
+// filter/page combination costs at most one Postgres round-trip every 30s
+// instead of one per request.
 publicRouter.get("/opportunities", async (req, res) => {
-  const { type, search, tags } = req.query;
+  const { type, search, tags, limit, offset } = req.query;
 
   const typeFilter = typeof type === "string" && VALID_TYPES.includes(type as OpportunityType)
     ? (type as OpportunityType)
     : undefined;
   const searchFilter = typeof search === "string" && search.length > 0 ? search : undefined;
   const tagSlugs = typeof tags === "string" && tags.length > 0 ? tags.split(",") : undefined;
+  const limitNum = typeof limit === "string" && Number.isFinite(Number(limit)) ? Number(limit) : undefined;
+  const offsetNum = typeof offset === "string" && Number.isFinite(Number(offset)) ? Number(offset) : undefined;
 
-  const results = await getPublic({ type: typeFilter, search: searchFilter, tagSlugs });
-  res.json({ results, count: results.length });
+  const page = await getPublicPage({
+    type: typeFilter,
+    search: searchFilter,
+    tagSlugs,
+    limit: limitNum,
+    offset: offsetNum,
+  });
+  res.set("Cache-Control", "s-maxage=30, stale-while-revalidate");
+  res.json({ results: page.results, count: page.results.length, total: page.total, hasMore: page.hasMore });
 });
 
 publicRouter.get("/opportunities/:id", async (req, res) => {

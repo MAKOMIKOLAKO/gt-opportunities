@@ -123,15 +123,18 @@ function setState(patch) {
 // Data fetching
 // ---------------------------------------------------------------------
 
-async function fetchOpportunities() {
+const PAGE_SIZE = 30;
+
+async function fetchOpportunities({ offset = 0 } = {}) {
   const params = new URLSearchParams();
   if (state.typeFilter) params.set("type", state.typeFilter);
   if (state.query.trim()) params.set("search", state.query.trim());
-  const qs = params.toString();
-  const res = await fetch(`${API_BASE}/opportunities${qs ? "?" + qs : ""}`);
+  params.set("limit", String(PAGE_SIZE));
+  params.set("offset", String(offset));
+  const res = await fetch(`${API_BASE}/opportunities?${params.toString()}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
-  return data.results || [];
+  return { results: data.results || [], hasMore: !!data.hasMore };
 }
 
 async function fetchOpportunity(id) {
@@ -320,20 +323,108 @@ function renderDirectory() {
   `;
 }
 
+function orgListRowHtml(o) {
+  return `
+    <a class="org-list-row" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
+      <div class="org-list-name">
+        <span class="org-list-dot" style="background:${o.iconColor}"></span>
+        <span class="name">${escapeHtml(o.name)}</span>
+      </div>
+      <div class="org-list-cell type">${escapeHtml(o.typeLabel)}</div>
+      <div class="org-list-cell discipline">${escapeHtml(o.discipline)}</div>
+    </a>
+  `;
+}
+
+function orgCardHtml(o) {
+  return `
+    <a class="org-card" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
+      <div class="org-card-top">
+        ${renderOrgIcon(o)}
+      </div>
+      <div>
+        <div class="org-card-name">${escapeHtml(o.name)}</div>
+        <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
+      </div>
+      <div class="org-card-blurb">${escapeHtml(truncate(o.description, 140))}</div>
+      <div class="tag-chips">
+        ${(o.tags || []).slice(0, 4).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
+      </div>
+    </a>
+  `;
+}
+
+function updateResultCountText(count) {
+  const countEl = el("#resultCount");
+  if (!countEl) return;
+  const suffix = pagination.hasMore ? "+" : "";
+  countEl.textContent = `${count}${suffix} organization${count === 1 && !pagination.hasMore ? "" : "s"} found`;
+}
+
+// ---------------------------------------------------------------------
+// Infinite scroll — GET /api/opportunities is paginated (PAGE_SIZE per
+// request; see fetchOpportunities()) instead of returning the whole
+// directory in one ~1MB response. `pagination` tracks where the next page
+// starts; an IntersectionObserver on a sentinel element at the bottom of
+// the results fetches and appends the next page as the user scrolls near
+// it, instead of a "load more" button or refetching everything.
+// ---------------------------------------------------------------------
+
+const pagination = { offset: 0, hasMore: true, loading: false };
+let scrollObserver = null;
+
+function disconnectScrollObserver() {
+  if (scrollObserver) {
+    scrollObserver.disconnect();
+    scrollObserver = null;
+  }
+}
+
+function setupScrollObserver() {
+  disconnectScrollObserver();
+  const sentinel = el("#scrollSentinel");
+  if (!sentinel) return;
+  scrollObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting)) loadMoreDirectory();
+    },
+    { rootMargin: "600px 0px" } // start the fetch well before the sentinel is actually on-screen, so new cards are already there by the time the user scrolls to them
+  );
+  scrollObserver.observe(sentinel);
+}
+
+function setSentinelText(text) {
+  const sentinel = el("#scrollSentinel");
+  if (sentinel) sentinel.textContent = text;
+}
+
+// Full (re)build of #resultsContainer from the accumulated directoryCache —
+// called after loadDirectory() replaces it with a fresh page 1, and after
+// any purely-client-side re-filter (discipline change, layout toggle) that
+// doesn't need a refetch. Always ends with a fresh sentinel + observer
+// (a full innerHTML rebuild destroys the previous one).
 function renderCardsInto(orgs) {
   const container = el("#resultsContainer");
   if (!container) return;
 
   const filtered = orgs.filter(matchesDiscipline);
-  el("#resultCount").textContent = `${filtered.length} organization${filtered.length === 1 ? "" : "s"} found`;
+  updateResultCountText(filtered.length);
 
   if (filtered.length === 0) {
-    container.innerHTML = `
+    // If more pages exist, the discipline filter may just be starving this
+    // page — keep the sentinel alive so the observer keeps pulling in more
+    // pages until either a match shows up or the server runs out (hasMore
+    // goes false), instead of stranding the user on a false "no matches".
+    container.innerHTML = pagination.hasMore
+      ? `<div class="state-msg">Loading&hellip;</div><div id="scrollSentinel" class="scroll-sentinel"></div>`
+      : `
       <div class="empty-state">
         <div class="empty-state-title">No matches found</div>
         <div class="empty-state-sub">Try a different keyword or clear your filters — or submit the org yourself.</div>
       </div>
     `;
+    if (pagination.hasMore) setupScrollObserver();
+    else disconnectScrollObserver();
     return;
   }
 
@@ -343,56 +434,82 @@ function renderCardsInto(orgs) {
         <div class="org-list-head">
           <div>Name</div><div>Type</div><div>Discipline</div>
         </div>
-        ${filtered
-          .map((o) => {
-            return `
-            <a class="org-list-row" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
-              <div class="org-list-name">
-                <span class="org-list-dot" style="background:${o.iconColor}"></span>
-                <span class="name">${escapeHtml(o.name)}</span>
-              </div>
-              <div class="org-list-cell type">${escapeHtml(o.typeLabel)}</div>
-              <div class="org-list-cell discipline">${escapeHtml(o.discipline)}</div>
-            </a>
-          `;
-          })
-          .join("")}
+        ${filtered.map(orgListRowHtml).join("")}
       </div>
+      <div id="scrollSentinel" class="scroll-sentinel"></div>
     `;
+  } else {
+    container.innerHTML = `
+      <div class="org-grid">
+        ${filtered.map(orgCardHtml).join("")}
+      </div>
+      <div id="scrollSentinel" class="scroll-sentinel"></div>
+    `;
+  }
+  if (pagination.hasMore) setupScrollObserver();
+  else disconnectScrollObserver();
+}
+
+// Appends just the newly-fetched page's cards instead of rebuilding the
+// whole container — the cheap path loadMoreDirectory() uses on every scroll
+// trigger. Falls back to a full renderCardsInto() rebuild if there's no
+// existing grid/list to append into yet (e.g. every row on page 1 was
+// filtered out client-side by discipline, so the container is still in the
+// "Loading…" placeholder state from above).
+function appendCardsInto(newOrgs) {
+  const container = el("#resultsContainer");
+  if (!container) return;
+  const listEl = container.querySelector(".org-list");
+  const gridEl = container.querySelector(".org-grid");
+  if (!listEl && !gridEl) {
+    renderCardsInto(directoryCache);
     return;
   }
 
-  container.innerHTML = `
-    <div class="org-grid">
-      ${filtered
-        .map(
-          (o) => `
-        <a class="org-card" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
-          <div class="org-card-top">
-            ${renderOrgIcon(o)}
-          </div>
-          <div>
-            <div class="org-card-name">${escapeHtml(o.name)}</div>
-            <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
-          </div>
-          <div class="org-card-blurb">${escapeHtml(truncate(o.description, 140))}</div>
-          <div class="tag-chips">
-            ${(o.tags || []).slice(0, 4).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
-          </div>
-        </a>
-      `
-        )
-        .join("")}
-    </div>
-  `;
+  const filteredNew = newOrgs.filter(matchesDiscipline);
+  updateResultCountText(directoryCache.filter(matchesDiscipline).length);
+  if (filteredNew.length === 0) return;
+
+  const html = (state.layout === "list" ? filteredNew.map(orgListRowHtml) : filteredNew.map(orgCardHtml)).join("");
+  (listEl || gridEl).insertAdjacentHTML("beforeend", html);
+}
+
+async function loadMoreDirectory() {
+  if (pagination.loading || !pagination.hasMore) return;
+  pagination.loading = true;
+  setSentinelText("Loading more…");
+  try {
+    const { results, hasMore } = await fetchOpportunities({ offset: pagination.offset });
+    const decorated = results.map(decorateOrg);
+    directoryCache = directoryCache.concat(decorated);
+    pagination.offset += results.length;
+    pagination.hasMore = hasMore && results.length > 0;
+    appendCardsInto(decorated);
+  } catch {
+    // Leave pagination.hasMore untouched so scrolling back into view
+    // (the sentinel is still there and still observed) retries the same
+    // offset instead of silently giving up on the rest of the directory.
+    setSentinelText("Couldn't load more — scroll to try again");
+  } finally {
+    pagination.loading = false;
+    if (pagination.hasMore) setSentinelText("");
+    else disconnectScrollObserver();
+  }
 }
 
 async function loadDirectory() {
+  disconnectScrollObserver();
+  pagination.offset = 0;
+  pagination.hasMore = true;
+  pagination.loading = false;
   try {
-    const raw = await fetchOpportunities();
-    directoryCache = raw.map(decorateOrg);
+    const { results, hasMore } = await fetchOpportunities({ offset: 0 });
+    directoryCache = results.map(decorateOrg);
+    pagination.offset = results.length;
+    pagination.hasMore = hasMore;
     renderCardsInto(directoryCache);
   } catch (err) {
+    disconnectScrollObserver();
     const container = el("#resultsContainer");
     if (container) container.innerHTML = `<div class="state-msg error">Failed to load opportunities: ${escapeHtml(err.message)}</div>`;
   }

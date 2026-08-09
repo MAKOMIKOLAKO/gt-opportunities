@@ -223,6 +223,82 @@ export async function getPublic(filters: PublicFilters = {}): Promise<Opportunit
   return attachTags(sortByRelevanceThenTitle(rows, ranks));
 }
 
+export interface PublicPageFilters extends PublicFilters {
+  limit?: number;
+  offset?: number;
+}
+
+export interface PublicPage {
+  results: OpportunityDTO[];
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * Paginated sibling of getPublic() — same filters/ordering, but hydrates
+ * only one page of full rows instead of the entire approved table.
+ *
+ * getPublic() (and everything backed by it — homepage, sitemap.xml,
+ * category pages) was fetching `SELECT *` for every approved row (~850 and
+ * growing) on every single request, including the majors/meta/details JSON
+ * columns nobody needed until the moment a card was actually rendered. That
+ * was the dominant cost in the homepage's load time (measured: ~1.25MB
+ * response, 0.6-2s TTFB). Fixed here with a two-phase read instead of
+ * adding LIMIT/OFFSET directly to the existing query:
+ *   1. Resolve the ordered list of matching ids using only `id`/`name`
+ *      (cheap — no JSON columns) plus the existing search-rank/tag-match
+ *      lookups, which were already narrow queries.
+ *   2. Hydrate full rows for ONLY the requested page's ids.
+ * getPublic() itself is untouched (still used by seo.ts's sitemap/category
+ * pages and anything else that legitimately needs every row at once).
+ */
+export async function getPublicPage(filters: PublicPageFilters = {}): Promise<PublicPage> {
+  const limit = Math.min(Math.max(filters.limit ?? 30, 1), 100);
+  const offset = Math.max(filters.offset ?? 0, 0);
+
+  const conditions = [eq(opportunities.status, "approved" as const)];
+  if (filters.type) {
+    conditions.push(eq(opportunities.type, filters.type));
+  }
+
+  let idRows = await db
+    .select({ id: opportunities.id, name: opportunities.name })
+    .from(opportunities)
+    .where(and(...conditions));
+
+  let ranks: Map<number, number> | undefined;
+  if (filters.search) {
+    ranks = await searchMatchingIds(filters.search);
+    idRows = idRows.filter((r) => ranks!.has(r.id));
+  }
+
+  if (filters.tagSlugs && filters.tagSlugs.length > 0) {
+    const tagMatchRows = await db
+      .select({ opportunityId: opportunityTags.opportunityId })
+      .from(opportunityTags)
+      .innerJoin(tags, eq(opportunityTags.tagId, tags.id))
+      .where(inArray(tags.slug, filters.tagSlugs));
+    const matchIds = new Set(tagMatchRows.map((r) => r.opportunityId));
+    idRows = idRows.filter((r) => matchIds.has(r.id));
+  }
+
+  const orderedIds = sortByRelevanceThenTitle(idRows, ranks).map((r) => r.id);
+  const total = orderedIds.length;
+  const pageIds = orderedIds.slice(offset, offset + limit);
+  const hasMore = offset + limit < total;
+
+  if (pageIds.length === 0) return { results: [], total, hasMore: false };
+
+  const pageRows = await db.select().from(opportunities).where(inArray(opportunities.id, pageIds));
+  // `WHERE id IN (...)` doesn't preserve the list's order — re-sort the
+  // hydrated rows to match pageIds (i.e. the relevance/alphabetical order
+  // computed above), not whatever order Postgres happened to return them in.
+  const byId = new Map(pageRows.map((r) => [r.id, r]));
+  const orderedPageRows = pageIds.map((id) => byId.get(id)).filter((r): r is typeof pageRows[number] => r != null);
+
+  return { results: await attachTags(orderedPageRows), total, hasMore };
+}
+
 export type PublicBySlugResult =
   | { kind: "found"; opportunity: OpportunityDTO }
   | { kind: "redirect"; newSlug: string }
