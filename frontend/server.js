@@ -28,6 +28,22 @@ const backend = new URL(BACKEND_URL);
 
 const app = express();
 
+// Legacy `?opportunity=<id>` deep link (predates real client-side routing
+// onto /org/:slug — see backend/src/routes/seo.ts's GET / redirect route
+// and app.js's navigateToDetail): route it to the backend's 301 handler
+// instead of letting express.static below serve the plain homepage and
+// silently strand the old link. Must be registered before express.static,
+// which would otherwise match GET "/" regardless of query string. The
+// still-live "leave a review" hop uses a URL fragment (#opportunity=<id>)
+// instead, which is never sent to the server, so it never reaches here.
+app.get("/", (req, res, next) => {
+  if (typeof req.query.opportunity !== "string") {
+    next();
+    return;
+  }
+  proxyTo("")(req, res);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 function proxyTo(backendPathPrefix) {
