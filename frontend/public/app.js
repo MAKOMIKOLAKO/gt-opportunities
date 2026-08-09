@@ -4,10 +4,14 @@
 
 const API_BASE = "/api"; // same-origin; frontend/server.js proxies this to the backend
 
+// Per-type icon-background / label colors, reused directly from the
+// Club Aggregator mockup's own catColors/avatarBg maps (VIP -> its "Arts &
+// Culture" rose, Lab -> its "Technology" blue, Club -> its "Service"
+// green) — see the matching --cat-* custom properties in style.css.
 const TYPE_META = {
-  vip: { label: "VIP Team", color: "#003057" },
-  lab: { label: "Research Lab", color: "#5F249F" },
-  club: { label: "Student Org", color: "#00707A" },
+  vip: { label: "VIP Team", color: "oklch(62% 0.11 340)", catColor: "oklch(55% 0.1 340)" },
+  lab: { label: "Research Lab", color: "oklch(55% 0.09 200)", catColor: "oklch(50% 0.09 200)" },
+  club: { label: "Student Org", color: "oklch(56% 0.09 140)", catColor: "oklch(52% 0.08 140)" },
 };
 
 const TYPE_FILTERS = [
@@ -98,11 +102,10 @@ const state = {
   typeFilter: "",
   discipline: "All Disciplines",
   selectedId: null,
+  detailTab: "about", // about | apply — reset to "about" in navigateToDetail()
   allTags: [],
   submitted: false,
   lastSubmittedName: "",
-  reviewFormOpportunityId: null,
-  flagReviewId: null,
   iconFormOpportunityId: null,
   iconSubmitMessage: "",
   suggestEditFormOpportunityId: null,
@@ -151,17 +154,6 @@ async function fetchTags() {
   return data.results || [];
 }
 
-async function submitReview(opportunityId, body) {
-  const res = await fetch(`${API_BASE}/opportunities/${opportunityId}/reviews`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
-  return data.result;
-}
-
 // Field picker for "Suggest an edit" — matches the server-side allowlist
 // exactly (backend/src/routes/public.ts SUGGESTABLE_FIELDS). `majors` is
 // entered as a comma-separated list in the UI and converted to the
@@ -196,17 +188,6 @@ async function submitAccessRequest(opportunityId, body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ opportunity_id: opportunityId, ...body }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
-  return data.result;
-}
-
-async function flagReview(reviewId, category, details) {
-  const res = await fetch(`${API_BASE}/reviews/${reviewId}/report`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category, details }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error((data.details && data.details.join("; ")) || data.error || `HTTP ${res.status}`);
@@ -252,12 +233,13 @@ function renderFooter() {
 // ---------------------------------------------------------------------
 
 function decorateOrg(opp) {
-  const type = TYPE_META[opp.type] || { label: opp.type, color: "#54585A" };
+  const type = TYPE_META[opp.type] || { label: opp.type, color: "#54585A", catColor: "#54585A" };
   const discipline = computeDiscipline(opp.majors);
   return {
     ...opp,
     typeLabel: type.label,
     iconColor: type.color,
+    catColor: type.catColor,
     discipline,
     initials: initials(opp.name),
   };
@@ -273,6 +255,7 @@ function renderDirectory() {
   return `
     <main class="view-directory">
       <div class="dir-heading">
+        <div class="dir-eyebrow">Georgia Institute of Technology</div>
         <h1>Find your next project</h1>
         <p>Search VIP teams, research labs, and technical student organizations in one place — no more digging through CampusGroups.</p>
       </div>
@@ -344,7 +327,7 @@ function orgCardHtml(o) {
       </div>
       <div>
         <div class="org-card-name">${escapeHtml(o.name)}</div>
-        <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
+        <div class="org-card-sub" style="color:${o.catColor}">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
       </div>
       <div class="org-card-blurb">${escapeHtml(truncate(o.description, 140))}</div>
       <div class="tag-chips">
@@ -524,75 +507,103 @@ let directoryCache = [];
 function renderDetailShell() {
   return `
     <main class="view-detail">
-      <button class="detail-back" data-action="go-directory">&larr; Back to directory</button>
       <div id="detailContent"><div class="state-msg">Loading&hellip;</div></div>
     </main>
   `;
 }
 
 // Detail data is cached per-id so that opening/closing the "Suggest an
-// edit" or "Submit an icon" modals — which go through the same setState()
-// -> render() path as everything else — doesn't refetch and flash the
-// whole detail pane back to a loading state on every click.
+// edit"/"Submit an icon"/"Request access" modals, and switching tabs — all
+// of which go through the same setState() -> render() path as everything
+// else — don't refetch and flash the whole detail pane back to a loading
+// state.
 let detailCache = {};
+
+const DETAIL_TABS = [
+  { key: "about", label: "About" },
+  { key: "apply", label: "How to Apply" },
+];
+
+function renderDetailAboutTab(opp, d) {
+  return `
+    <div class="detail-info-grid">
+      ${
+        opp.type === "club"
+          ? ""
+          : `
+      <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
+      <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+      `
+      }
+      <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
+    </div>
+
+    ${
+      (opp.tags || []).length
+        ? `
+    <div class="detail-tags-block">
+      <div class="detail-tags-label">Skills &amp; Keywords</div>
+      <div class="tag-chips">${opp.tags.map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}</div>
+    </div>`
+        : ""
+    }
+
+    ${renderRelatedOrgsBlock(opp)}
+
+    <div class="detail-footer-actions">
+      <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
+      <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
+      <button class="leader-access-btn" data-action="open-access-request" data-id="${opp.id}">Leading this club/VIP? Request access</button>
+    </div>
+    ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
+    ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
+    ${state.accessRequestMessage ? `<div class="utility-feedback">${escapeHtml(state.accessRequestMessage)}</div>` : ""}
+  `;
+}
+
+function renderDetailApplyTab(opp, d) {
+  return `
+    ${d.applyUrl ? `<p><a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">Apply / Learn more &rarr;</a></p>` : ""}
+    <p class="detail-contact">Contact: ${escapeHtml(d.contact)}</p>
+    ${renderLinksBlock(opp)}
+  `;
+}
 
 function renderDetailBody(opp) {
     const d = detailFields(opp);
+    const tab = state.detailTab;
     return `
       <div class="detail-card">
+        <nav class="detail-breadcrumbs" aria-label="Breadcrumb">
+          <button type="button" data-action="go-directory">Directory</button>
+          <span aria-hidden="true">/</span>
+          <span class="crumb-cat" style="color:${opp.catColor}">${escapeHtml(opp.typeLabel)}</span>
+          <span aria-hidden="true">/</span>
+          <span class="crumb-current">${escapeHtml(opp.name)}</span>
+        </nav>
+
         <div class="detail-header">
           ${renderOrgIcon(opp, "lg")}
           <div class="detail-header-text">
-            <div class="detail-title-row">
-              <h1>${escapeHtml(opp.name)}</h1>
-            </div>
-            <div class="detail-sub">${escapeHtml(opp.typeLabel)} &middot; ${escapeHtml(opp.discipline)}</div>
+            <h1>${escapeHtml(opp.name)}</h1>
+            <div class="detail-sub" style="color:${opp.catColor}">${escapeHtml(opp.typeLabel)}</div>
           </div>
         </div>
 
         <p class="detail-desc">${escapeHtml(opp.description || "")}</p>
 
-        <div class="detail-info-grid">
-          ${
-            opp.type === "club"
-              ? ""
-              : `
-          <div><div class="detail-info-label">Credit / Pay</div><div class="detail-info-value">${escapeHtml(d.creditPay)}</div></div>
-          <div><div class="detail-info-label">Faculty Lead</div><div class="detail-info-value">${escapeHtml(d.lead)}</div></div>
+        <div class="detail-tabs" role="tablist">
+          ${DETAIL_TABS.map(
+            (t) => `
+          <button class="detail-tab-btn ${tab === t.key ? "active" : ""}" role="tab" aria-selected="${tab === t.key}" data-action="detail-tab" data-tab="${t.key}">${t.label}</button>
           `
-          }
-          <div><div class="detail-info-label">Meets</div><div class="detail-info-value">${escapeHtml(d.meets)}</div></div>
+          ).join("")}
         </div>
 
-        ${
-          (opp.tags || []).length
-            ? `
-        <div class="detail-tags-block">
-          <div class="detail-tags-label">Skills &amp; Keywords</div>
-          <div class="tag-chips">${opp.tags.map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}</div>
-        </div>`
-            : ""
-        }
-
-        <div class="detail-footer">
-          ${d.applyUrl ? `<a class="apply-btn" href="${escapeAttr(d.applyUrl)}" target="_blank" rel="noopener">How to Apply</a>` : ""}
-          <div class="detail-contact">Contact: ${escapeHtml(d.contact)}</div>
+        <div class="detail-tab-panel" role="tabpanel">
+          ${tab === "apply" ? renderDetailApplyTab(opp, d) : renderDetailAboutTab(opp, d)}
         </div>
-        <div class="detail-footer-actions">
-          <button class="propose-edit-btn" data-action="open-suggest-edit" data-id="${opp.id}">Suggest an edit</button>
-          <button class="icon-submit-btn" data-action="open-icon-form" data-id="${opp.id}">Submit an icon</button>
-          <button class="leader-access-btn" data-action="open-access-request" data-id="${opp.id}">Leading this club/VIP? Request access</button>
-        </div>
-        ${state.suggestEditMessage ? `<div class="utility-feedback">${escapeHtml(state.suggestEditMessage)}</div>` : ""}
-        ${state.iconSubmitMessage ? `<div class="utility-feedback">${escapeHtml(state.iconSubmitMessage)}</div>` : ""}
-        ${state.accessRequestMessage ? `<div class="utility-feedback">${escapeHtml(state.accessRequestMessage)}</div>` : ""}
-
-        ${renderLinksBlock(opp)}
-
-        ${renderReviewsBlock(opp)}
       </div>
-
-      ${renderRelatedOrgsBlock(opp)}
     `;
 }
 
@@ -668,7 +679,7 @@ function renderRelatedOrgsBlock(opp) {
     <div class="related-orgs-block">
       <h2>Related organizations</h2>
       <div class="related-orgs-scroller">
-        ${related.map(renderRelatedOrgCard).join("")}
+        ${related.map(renderRelatedOrgChip).join("")}
       </div>
     </div>
   `;
@@ -743,22 +754,8 @@ async function handleIconSubmit(e) {
   }
 }
 
-function renderRelatedOrgCard(o) {
-  return `
-    <a class="org-card related-org-card" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">
-      <div class="org-card-top">
-        ${renderOrgIcon(o)}
-      </div>
-      <div>
-        <div class="org-card-name">${escapeHtml(o.name)}</div>
-        <div class="org-card-sub">${escapeHtml(o.typeLabel)} &middot; ${escapeHtml(o.discipline)}</div>
-      </div>
-      <div class="org-card-blurb">${escapeHtml(truncate(o.description, 110))}</div>
-      <div class="tag-chips">
-        ${(o.tags || []).slice(0, 3).map((t) => `<span class="tag-chip">${escapeHtml(t.label)}</span>`).join("")}
-      </div>
-    </a>
-  `;
+function renderRelatedOrgChip(o) {
+  return `<a class="related-org-chip" href="/org/${escapeAttr(o.slug)}" data-action="open-detail" data-id="${o.id}">${escapeHtml(o.name)}</a>`;
 }
 
 // ---------------------------------------------------------------------
@@ -828,108 +825,6 @@ function renderAccessRequestModal() {
           <div class="review-form-actions">
             <button type="button" class="review-form-cancel-btn" data-action="close-access-request">Cancel</button>
             <button type="submit" class="submit-btn">Submit request</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// ---------------------------------------------------------------------
-// Rendering — reviews (Addition 3)
-//
-// Reviews are anonymous, structured (three short-answer prompts), and
-// deliberately have no rating field. Only approved reviews are ever sent
-// to this client (see getApprovedReviews() server-side) — most recent
-// first.
-// ---------------------------------------------------------------------
-
-function renderReviewsBlock(opp) {
-  const reviews = opp.reviews || [];
-  return `
-    <div class="reviews-block">
-      <div class="reviews-block-head">
-        <h2>Member Reviews</h2>
-        <button class="review-write-btn" data-action="open-review-form" data-id="${opp.id}">Write a review</button>
-      </div>
-      ${
-        reviews.length === 0
-          ? `<div class="review-empty">No reviews yet — be the first to share what it's actually like.</div>`
-          : `<div class="review-list">${reviews.map(renderReviewCard).join("")}</div>`
-      }
-    </div>
-  `;
-}
-
-function renderReviewCard(r) {
-  return `
-    <div class="review-card">
-      <div class="review-card-row">
-        <div class="review-card-q">Time commitment</div>
-        <div class="review-card-a">${escapeHtml(r.timeCommitment)}</div>
-      </div>
-      <div class="review-card-row">
-        <div class="review-card-q">Before applying</div>
-        <div class="review-card-a">${escapeHtml(r.beforeApplying)}</div>
-      </div>
-      <div class="review-card-row">
-        <div class="review-card-q">Advice for a new member</div>
-        <div class="review-card-a">${escapeHtml(r.adviceNewMember)}</div>
-      </div>
-      <div class="review-card-footer">
-        <span class="review-card-date">${escapeHtml((r.createdAt || "").slice(0, 10))}</span>
-        <button class="review-flag-btn" data-action="flag-review" data-review-id="${escapeAttr(r.id)}">Flag this review</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderReviewFormModal() {
-  if (!state.reviewFormOpportunityId) return "";
-  return `
-    <div class="review-form-modal-backdrop" data-action="close-review-form">
-      <div class="review-form-modal" data-stop-close="1">
-        <h3>Write a review</h3>
-        <div class="modal-sub">Anonymous — we don't collect your name, email, or any identifying info. No rating, just three short answers.</div>
-        <form id="reviewForm">
-          <label for="reviewTimeCommitment">What's the time commitment actually like?</label>
-          <textarea id="reviewTimeCommitment" name="timeCommitment" required rows="2" maxlength="1000"></textarea>
-          <label for="reviewBeforeApplying">What should someone know before applying?</label>
-          <textarea id="reviewBeforeApplying" name="beforeApplying" required rows="2" maxlength="1000"></textarea>
-          <label for="reviewAdviceNewMember">Any advice for a new member?</label>
-          <textarea id="reviewAdviceNewMember" name="adviceNewMember" required rows="2" maxlength="1000"></textarea>
-          <div id="reviewFormError"></div>
-          <div class="review-form-actions">
-            <button type="button" class="review-form-cancel-btn" data-action="close-review-form">Cancel</button>
-            <button type="submit" class="submit-btn">Submit for review</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-function renderFlagFormModal() {
-  if (!state.flagReviewId) return "";
-  return `
-    <div class="review-form-modal-backdrop" data-action="close-flag-form">
-      <div class="review-form-modal" data-stop-close="1">
-        <h3>Flag this review</h3>
-        <div class="modal-sub">For PIs/advisors/club leaders to request re-review of a published review. No account needed.</div>
-        <form id="flagForm">
-          <label for="flagCategory">Reason</label>
-          <select id="flagCategory" name="category" required style="width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--pi-mile);font-size:16px;margin-bottom:14px;">
-            <option value="other">Other / needs re-review</option>
-            <option value="outdated_info">Outdated info</option>
-            <option value="wrong_contact">Wrong contact info</option>
-            <option value="broken_link">Broken link</option>
-          </select>
-          <label for="flagDetails">Details (optional)</label>
-          <textarea id="flagDetails" name="details" rows="3" maxlength="1000" placeholder="What's wrong with this review?"></textarea>
-          <div id="flagFormError"></div>
-          <div class="review-form-actions">
-            <button type="button" class="review-form-cancel-btn" data-action="close-flag-form">Cancel</button>
-            <button type="submit" class="submit-btn">Submit flag</button>
           </div>
         </form>
       </div>
@@ -1113,7 +1008,7 @@ function escapeAttr(str) {
 // Main render / event wiring
 // ---------------------------------------------------------------------
 
-// The modal forms (review/flag/icon/suggest-edit) toggle open and closed
+// The modal forms (icon/suggest-edit/access-request) toggle open and closed
 // through the same setState()->render() path as every other state change,
 // but they only ever open from the detail page and don't affect the
 // header/detail/footer content at all. Rebuilding the *entire* #app
@@ -1156,8 +1051,7 @@ function render() {
 function renderModals() {
   const modalRoot = el("#modalRoot");
   if (!modalRoot) return;
-  modalRoot.innerHTML =
-    renderReviewFormModal() + renderFlagFormModal() + renderIconFormModal() + renderSuggestEditModal() + renderAccessRequestModal();
+  modalRoot.innerHTML = renderIconFormModal() + renderSuggestEditModal() + renderAccessRequestModal();
 }
 
 let eventsWired = false;
@@ -1175,15 +1069,12 @@ function wireEvents() {
     const node = e.target.closest("[data-action]");
     if (!node) return;
     // Modal backdrops close on click, but not when the click originated
-    // inside the modal card itself (data-stop-close) — e.g. clicking a
-    // <select> inside the flag form shouldn't dismiss the modal. This only
-    // applies when the closest [data-action] is the backdrop itself — the
+    // inside the modal card itself (data-stop-close). This only applies
+    // when the closest [data-action] is the backdrop itself — the
     // Cancel/exit buttons live inside data-stop-close too, and must still
     // close the modal when clicked directly.
     if (
-      (node.dataset.action === "close-review-form" ||
-        node.dataset.action === "close-flag-form" ||
-        node.dataset.action === "close-icon-form" ||
+      (node.dataset.action === "close-icon-form" ||
         node.dataset.action === "close-suggest-edit" ||
         node.dataset.action === "close-access-request") &&
       node.classList.contains("review-form-modal-backdrop") &&
@@ -1194,6 +1085,9 @@ function wireEvents() {
     switch (node.dataset.action) {
       case "go-directory":
         navigateToDirectory();
+        break;
+      case "detail-tab":
+        setState({ detailTab: node.dataset.tab });
         break;
       case "open-detail": {
         // These are real <a href="/org/:slug"> elements now (module 4: real,
@@ -1229,20 +1123,6 @@ function wireEvents() {
         break;
       case "submit-again":
         setState({ submitted: false, lastSubmittedName: "" });
-        break;
-      case "open-review-form":
-        setState({ reviewFormOpportunityId: Number(node.dataset.id) });
-        break;
-      case "close-review-form":
-        if (e.target !== node && node.dataset.stopClose) return;
-        setState({ reviewFormOpportunityId: null });
-        break;
-      case "flag-review":
-        setState({ flagReviewId: node.dataset.reviewId });
-        break;
-      case "close-flag-form":
-        if (e.target !== node && node.dataset.stopClose) return;
-        setState({ flagReviewId: null });
         break;
       case "add-link-row": {
         const container = el("#linkRows");
@@ -1296,10 +1176,6 @@ function wireEvents() {
   app.addEventListener("submit", (e) => {
     if (e.target.id === "submitForm") {
       handleSubmit(e);
-    } else if (e.target.id === "reviewForm") {
-      handleReviewSubmit(e);
-    } else if (e.target.id === "flagForm") {
-      handleFlagSubmit(e);
     } else if (e.target.id === "iconForm") {
       handleIconSubmit(e);
     } else if (e.target.id === "suggestEditForm") {
@@ -1308,48 +1184,6 @@ function wireEvents() {
       handleAccessRequestSubmit(e);
     }
   });
-}
-
-async function handleReviewSubmit(e) {
-  e.preventDefault();
-  const form = e.target;
-  const opportunityId = state.reviewFormOpportunityId;
-  const btn = form.querySelector("button[type=submit]");
-  const errorEl = el("#reviewFormError");
-  errorEl.innerHTML = "";
-  btn.disabled = true;
-  btn.textContent = "Submitting…";
-  try {
-    await submitReview(opportunityId, {
-      timeCommitment: form.timeCommitment.value.trim(),
-      beforeApplying: form.beforeApplying.value.trim(),
-      adviceNewMember: form.adviceNewMember.value.trim(),
-    });
-    setState({ reviewFormOpportunityId: null });
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "Submit for review";
-    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
-  }
-}
-
-async function handleFlagSubmit(e) {
-  e.preventDefault();
-  const form = e.target;
-  const reviewId = state.flagReviewId;
-  const btn = form.querySelector("button[type=submit]");
-  const errorEl = el("#flagFormError");
-  errorEl.innerHTML = "";
-  btn.disabled = true;
-  btn.textContent = "Submitting…";
-  try {
-    await flagReview(reviewId, form.category.value, form.details.value.trim());
-    setState({ flagReviewId: null });
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = "Submit flag";
-    errorEl.innerHTML = `<div class="form-error">${escapeHtml(err.message)}</div>`;
-  }
 }
 
 async function handleSuggestEditSubmit(e) {
@@ -1439,7 +1273,7 @@ function updateFilterChrome() {
 // ---------------------------------------------------------------------
 // Routing — real URLs for detail views (module 4: per-org subpages), kept
 // entirely client-side via the History API so the in-app experience
-// (modal-style detail pane, reviews, icon upload, suggest-edit) is
+// (modal-style detail pane, icon upload, suggest-edit) is
 // unchanged — only the URL bar changes. A FRESH load of /org/:slug (a
 // pasted link, a crawler, a no-JS visitor) never reaches this code at all;
 // it's served straight from Postgres by the SSR route in
@@ -1450,6 +1284,7 @@ function navigateToDetail(id, href, { push = true } = {}) {
   setState({
     view: "detail",
     selectedId: id,
+    detailTab: "about",
     suggestEditFormOpportunityId: null,
     suggestEditMessage: "",
     iconFormOpportunityId: null,

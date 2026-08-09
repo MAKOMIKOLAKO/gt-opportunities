@@ -1,23 +1,22 @@
 // Admin SPA: login gate + every moderation/ops surface the backend exposes
-// under /api/admin/*. Hash-routed (#/login, #/opportunities, #/reviews, ...)
+// under /api/admin/*. Hash-routed (#/login, #/opportunities, #/links, ...)
 // so the URL reflects state without needing server-side routes.
 //
 // This used to be split across two separate admin frontends — this file
 // (opportunity approval queue + leader-access revocation, module 6 of 7)
-// and a second, entirely separate app at the old /admin.html (reviews,
-// reports, links, icons, suggested edits, access requests + claim links,
-// audit log). Neither ever overlapped in functionality, so folding them
-// together was a straight port, not a conflict-resolution exercise: every
-// section below lives at its own hash route in this one shell, sharing the
-// same AdminAPI auth (both apps already used the same sessionStorage token
-// key, so a login here is not a regression for anyone with that old file
-// bookmarked — see /admin.html, which now just redirects here).
+// and a second, entirely separate app at the old /admin.html (links, icons,
+// suggested edits, access requests + claim links, audit log — plus reviews
+// and reports/disputes, both since removed entirely). Neither ever
+// overlapped in functionality, so folding them together was a straight
+// port, not a conflict-resolution exercise: every section below lives at
+// its own hash route in this one shell, sharing the same AdminAPI auth
+// (both apps already used the same sessionStorage token key, so a login
+// here is not a regression for anyone with that old file bookmarked — see
+// /admin.html, which now just redirects here).
 const root = document.getElementById("admin-app");
 
 const SECTIONS = [
   { slug: "opportunities", label: "Opportunities" },
-  { slug: "reviews", label: "Reviews" },
-  { slug: "reports", label: "Reports / Disputes" },
   { slug: "links", label: "Links" },
   { slug: "icons", label: "Pending Icons" },
   { slug: "suggested-edits", label: "Suggested Edits" },
@@ -130,8 +129,6 @@ function renderShell(section) {
   const sectionRoot = document.getElementById("admin-section-root");
   const renderers = {
     opportunities: renderOpportunitiesSection,
-    reviews: renderReviewsSection,
-    reports: renderReportsSection,
     links: renderLinksSection,
     icons: renderIconsSection,
     "suggested-edits": renderSuggestedEditsSection,
@@ -408,10 +405,10 @@ async function handleSave(id, results) {
 }
 
 // ---------------------------------------------------------------------
-// Shared "queue item" card renderer — reviews / reports / links / icons /
-// suggested edits / access requests all use the same shape (a title row +
-// a few label/value pairs + action buttons), just reused across sections
-// instead of duplicating layout CSS per section.
+// Shared "queue item" card renderer — links / icons / suggested edits /
+// access requests all use the same shape (a title row + a few label/value
+// pairs + action buttons), just reused across sections instead of
+// duplicating layout CSS per section.
 // ---------------------------------------------------------------------
 
 function fieldRowHtml(label, value) {
@@ -420,143 +417,6 @@ function fieldRowHtml(label, value) {
 
 function guidanceBannerHtml(text) {
   return `<div class="admin-guidance">${text}</div>`;
-}
-
-// ---------------------------------------------------------------------
-// Reviews
-// ---------------------------------------------------------------------
-
-async function renderReviewsSection(sectionRoot) {
-  sectionRoot.innerHTML = `
-    <div class="admin-main-head"><h1>Reviews</h1></div>
-    <div id="reviews-guidance"></div>
-    <div class="admin-error" id="reviews-error" hidden></div>
-    <div id="reviews-list" class="admin-queue-list"><p class="admin-loading">Loading...</p></div>
-  `;
-  await loadReviews();
-}
-
-async function loadReviews() {
-  try {
-    const { results, guidance } = await AdminAPI.request("/api/admin/reviews?status=pending");
-    document.getElementById("reviews-guidance").innerHTML = guidanceBannerHtml(
-      `<strong>Moderation guidance:</strong> ${escapeHtml(guidance || "")}`
-    );
-    renderReviewsList(results);
-  } catch (err) {
-    if (err.message === "unauthorized" || err.message === "not_authenticated") return;
-    document.getElementById("reviews-error").textContent = err.message;
-    document.getElementById("reviews-error").hidden = false;
-  }
-}
-
-function renderReviewsList(results) {
-  const listEl = document.getElementById("reviews-list");
-  if (results.length === 0) {
-    listEl.innerHTML = `<p class="admin-empty">No pending reviews.</p>`;
-    return;
-  }
-  listEl.innerHTML = results
-    .map(
-      (r) => `
-    <div class="admin-row">
-      <div class="admin-row-title">
-        <strong>${escapeHtml(r.opportunityName)}</strong>
-        <span class="admin-row-desc">(opportunity #${r.opportunityId})</span>
-      </div>
-      ${fieldRowHtml("Time commitment", escapeHtml(r.timeCommitment))}
-      ${fieldRowHtml("Before applying", escapeHtml(r.beforeApplying))}
-      ${fieldRowHtml("Advice for a new member", escapeHtml(r.adviceNewMember))}
-      <div class="admin-row-actions">
-        <button class="admin-btn admin-btn-approve" data-approve-review="${escapeHtml(r.id)}">Approve</button>
-        <button class="admin-btn admin-btn-reject" data-reject-review="${escapeHtml(r.id)}">Reject</button>
-      </div>
-    </div>
-  `
-    )
-    .join("");
-  listEl.querySelectorAll("[data-approve-review]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      try {
-        await AdminAPI.request(`/api/admin/reviews/${btn.dataset.approveReview}/approve`, { method: "POST" });
-        loadReviews();
-      } catch (err) {
-        if (err.message !== "unauthorized" && err.message !== "not_authenticated") alert(err.message);
-      }
-    })
-  );
-  listEl.querySelectorAll("[data-reject-review]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      try {
-        await AdminAPI.request(`/api/admin/reviews/${btn.dataset.rejectReview}/reject`, { method: "POST" });
-        loadReviews();
-      } catch (err) {
-        if (err.message !== "unauthorized" && err.message !== "not_authenticated") alert(err.message);
-      }
-    })
-  );
-}
-
-// ---------------------------------------------------------------------
-// Reports / disputes
-// ---------------------------------------------------------------------
-
-async function renderReportsSection(sectionRoot) {
-  sectionRoot.innerHTML = `
-    <div class="admin-main-head"><h1>Reports / Disputes</h1></div>
-    ${guidanceBannerHtml(
-      "General opportunity reports and review disputes (flagged published reviews) both land here. A review dispute is a request for re-review — go to the Reviews tab, re-check the flagged review against the same guidance, and reject it if warranted; resolving here just closes the report itself."
-    )}
-    <div class="admin-error" id="reports-error" hidden></div>
-    <div id="reports-list" class="admin-queue-list"><p class="admin-loading">Loading...</p></div>
-  `;
-  await loadReports();
-}
-
-async function loadReports() {
-  try {
-    const { results } = await AdminAPI.request("/api/admin/reports?status=open");
-    renderReportsList(results);
-  } catch (err) {
-    if (err.message === "unauthorized" || err.message === "not_authenticated") return;
-    document.getElementById("reports-error").textContent = err.message;
-    document.getElementById("reports-error").hidden = false;
-  }
-}
-
-function renderReportsList(results) {
-  const listEl = document.getElementById("reports-list");
-  if (results.length === 0) {
-    listEl.innerHTML = `<p class="admin-empty">No open reports.</p>`;
-    return;
-  }
-  listEl.innerHTML = results
-    .map(
-      (r) => `
-    <div class="admin-row">
-      <div class="admin-row-title">
-        <strong>${r.reviewId ? `Review dispute — review ${escapeHtml(r.reviewId.slice(0, 8))}&hellip;` : "Opportunity report"}</strong>
-        ${r.opportunityId ? `<span class="admin-row-desc">(opportunity #${r.opportunityId})</span>` : ""}
-      </div>
-      ${fieldRowHtml("Category", escapeHtml(r.category))}
-      ${r.details ? fieldRowHtml("Details", escapeHtml(r.details)) : ""}
-      <div class="admin-row-actions">
-        <button class="admin-btn admin-btn-primary" data-resolve="${r.id}">Mark resolved</button>
-      </div>
-    </div>
-  `
-    )
-    .join("");
-  listEl.querySelectorAll("[data-resolve]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      try {
-        await AdminAPI.request(`/api/admin/reports/${btn.dataset.resolve}/resolve`, { method: "POST" });
-        loadReports();
-      } catch (err) {
-        if (err.message !== "unauthorized" && err.message !== "not_authenticated") alert(err.message);
-      }
-    })
-  );
 }
 
 // ---------------------------------------------------------------------

@@ -280,7 +280,7 @@ ${breadcrumbNav(breadcrumbItems)}
        too, clicking this link would just bounce straight back to this same
        SSR page instead of reaching the interactive app. See app.js's
        applyDeepLinkFromUrl for the client-side counterpart. -->
-  <p class="ssr-app-link"><a href="/#opportunity=${opp.id}">Leave a review or suggest an edit in the interactive app →</a></p>
+  <p class="ssr-app-link"><a href="/#opportunity=${opp.id}">Suggest an edit in the interactive app →</a></p>
 </article>
 </main>
 ${siteFooterHtml()}`;

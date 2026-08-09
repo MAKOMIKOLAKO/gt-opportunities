@@ -14,8 +14,6 @@ import {
   opportunities,
   opportunityTags,
   tags,
-  reviews,
-  reports,
   links,
   relatedOpportunities,
   suggestedEdits,
@@ -26,9 +24,6 @@ import {
   auditLog,
   type OpportunityType,
   type OpportunityStatus,
-  type ReviewStatus,
-  type ReportCategory,
-  type ReportStatus,
   type LinkType,
   type LinkStatus,
   type SuggestedEditStatus,
@@ -607,7 +602,7 @@ export async function updateOpportunity(
 
 // ---- Org profile icon (icon submission feature) ----
 // Public submission -> admin approve/reject, following the same
-// pending-review-lifecycle shape as opportunities/reviews above.
+// pending-review-lifecycle shape as opportunities above.
 
 /**
  * Public path: submit a candidate icon URL for an EXISTING (public/approved)
@@ -684,220 +679,11 @@ export async function rejectIcon(id: number, _reviewedBy: string): Promise<Admin
   return getByIdForAdmin(id);
 }
 
-// ---- Reviews (Addition 3) ----
-// Anonymous, structured, text-only reviews. No rating field — see
-// BUILD_NOTES.md. Follows the same public/admin split as opportunities:
-// getApprovedReviews() is the ONLY sanctioned public read path (status is
-// hardcoded to 'approved', not a caller-controlled filter) and
-// getReviewsForAdmin()/mutation helpers are admin-only.
-
-export interface ReviewDTO {
-  id: string;
-  opportunityId: number;
-  timeCommitment: string;
-  beforeApplying: string;
-  adviceNewMember: string;
-  status: ReviewStatus;
-  createdAt: string;
-  reviewedBy: string | null;
-  reviewedAt: string | null;
-}
-
-function toReviewDTO(r: typeof reviews.$inferSelect): ReviewDTO {
-  return {
-    id: r.id,
-    opportunityId: r.opportunityId,
-    timeCommitment: r.timeCommitment,
-    beforeApplying: r.beforeApplying,
-    adviceNewMember: r.adviceNewMember,
-    status: r.status,
-    createdAt: r.createdAt,
-    reviewedBy: r.reviewedBy,
-    reviewedAt: r.reviewedAt,
-  };
-}
-
-export interface ReviewSubmissionInput {
-  opportunityId: number;
-  timeCommitment: string;
-  beforeApplying: string;
-  adviceNewMember: string;
-}
-
-/**
- * Public submission path. Deliberately accepts and stores NOTHING that
- * could identify the submitter — no name/email/IP/user-agent field exists
- * on the `reviews` table, so there is structurally nothing here to persist
- * beyond the three text answers.
- */
-export async function insertReview(input: ReviewSubmissionInput): Promise<string> {
-  const id = crypto.randomUUID();
-  await db.insert(reviews).values({
-    id,
-    opportunityId: input.opportunityId,
-    timeCommitment: input.timeCommitment,
-    beforeApplying: input.beforeApplying,
-    adviceNewMember: input.adviceNewMember,
-    status: "pending",
-  });
-  return id;
-}
-
-/**
- * The only sanctioned public-read path for reviews. status = 'approved' is
- * hardcoded — there is no way for a caller to request pending/rejected rows.
- * Most-recent-first.
- */
-export async function getApprovedReviews(opportunityId: number): Promise<ReviewDTO[]> {
-  const rows = await db
-    .select()
-    .from(reviews)
-    .where(and(eq(reviews.opportunityId, opportunityId), eq(reviews.status, "approved" as const)))
-    .orderBy(desc(reviews.createdAt));
-  return rows.map(toReviewDTO);
-}
-
-/**
- * The only sanctioned public-read path for a single review by id — used by
- * the dispute/flag endpoint to confirm the target is actually a published
- * (approved) review before accepting a report against it. status =
- * 'approved' is hardcoded, same as getApprovedReviews().
- */
-export async function getApprovedReviewById(id: string): Promise<ReviewDTO | null> {
-  const rows = await db
-    .select()
-    .from(reviews)
-    .where(and(eq(reviews.id, id), eq(reviews.status, "approved" as const)));
-  return rows.length ? toReviewDTO(rows[0]) : null;
-}
-
-/** ADMIN-ONLY: list reviews for the moderation queue, optionally by status. */
-export async function getReviewsForAdmin(
-  filters: { status?: ReviewStatus } = {}
-): Promise<(ReviewDTO & { opportunityName: string })[]> {
-  const conditions = filters.status ? [eq(reviews.status, filters.status)] : [];
-  const rows = await db
-    .select({
-      review: reviews,
-      opportunityName: opportunities.name,
-    })
-    .from(reviews)
-    .innerJoin(opportunities, eq(reviews.opportunityId, opportunities.id))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(reviews.createdAt));
-  return rows.map((r) => ({ ...toReviewDTO(r.review), opportunityName: r.opportunityName }));
-}
-
-async function getReviewById(id: string): Promise<typeof reviews.$inferSelect | null> {
-  const rows = await db.select().from(reviews).where(eq(reviews.id, id));
-  return rows[0] ?? null;
-}
-
-/** ADMIN-ONLY: approve a pending review, stamping reviewedBy/reviewedAt. */
-export async function approveReview(id: string, reviewedBy: string): Promise<ReviewDTO | null> {
-  if (!(await getReviewById(id))) return null;
-  await db
-    .update(reviews)
-    .set({ status: "approved", reviewedBy, reviewedAt: sql`now()` })
-    .where(eq(reviews.id, id));
-  return toReviewDTO((await getReviewById(id))!);
-}
-
-/** ADMIN-ONLY: reject a review, stamping reviewedBy/reviewedAt. */
-export async function rejectReview(id: string, reviewedBy: string): Promise<ReviewDTO | null> {
-  if (!(await getReviewById(id))) return null;
-  await db
-    .update(reviews)
-    .set({ status: "rejected", reviewedBy, reviewedAt: sql`now()` })
-    .where(eq(reviews.id, id));
-  return toReviewDTO((await getReviewById(id))!);
-}
-
-// ---- Reports (Addition 3) ----
-// Minimal reports mechanism, built now to support the review-dispute flow.
-// See BUILD_NOTES.md — this duplicates in-progress work on
-// worktree-reports-and-vip-search and will need reconciliation later.
-
-export interface ReportDTO {
-  id: number;
-  opportunityId: number | null;
-  reviewId: string | null;
-  category: ReportCategory;
-  details: string;
-  reporterContact: string | null;
-  status: ReportStatus;
-  createdAt: string;
-  resolvedBy: string | null;
-  resolvedAt: string | null;
-}
-
-function toReportDTO(r: typeof reports.$inferSelect): ReportDTO {
-  return {
-    id: r.id,
-    opportunityId: r.opportunityId,
-    reviewId: r.reviewId,
-    category: r.category,
-    details: r.details,
-    reporterContact: r.reporterContact,
-    status: r.status,
-    createdAt: r.createdAt,
-    resolvedBy: r.resolvedBy,
-    resolvedAt: r.resolvedAt,
-  };
-}
-
-export interface ReportInput {
-  opportunityId?: number | null;
-  reviewId?: string | null;
-  category: ReportCategory;
-  details?: string;
-  reporterContact?: string | null;
-}
-
-/** Public submission path (no auth). Used for both opportunity reports and review disputes. */
-export async function insertReport(input: ReportInput): Promise<number> {
-  const [row] = await db
-    .insert(reports)
-    .values({
-      opportunityId: input.opportunityId ?? null,
-      reviewId: input.reviewId ?? null,
-      category: input.category,
-      details: input.details ?? "",
-      reporterContact: input.reporterContact ?? null,
-      status: "open",
-    })
-    .returning({ id: reports.id });
-  return row.id;
-}
-
-/** ADMIN-ONLY: list reports for the moderation queue, optionally by status. */
-export async function getReportsForAdmin(filters: { status?: ReportStatus } = {}): Promise<ReportDTO[]> {
-  const conditions = filters.status ? [eq(reports.status, filters.status)] : [];
-  const rows = await db
-    .select()
-    .from(reports)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(reports.createdAt));
-  return rows.map(toReportDTO);
-}
-
-/** ADMIN-ONLY: mark a report resolved, stamping resolvedBy/resolvedAt. */
-export async function resolveReport(id: number, resolvedBy: string): Promise<ReportDTO | null> {
-  const existing = await db.select().from(reports).where(eq(reports.id, id));
-  if (existing.length === 0) return null;
-  await db
-    .update(reports)
-    .set({ status: "resolved", resolvedBy, resolvedAt: sql`now()` })
-    .where(eq(reports.id, id));
-  const rows = await db.select().from(reports).where(eq(reports.id, id));
-  return toReportDTO(rows[0]);
-}
-
 // ---- Links (additional org links beyond "how to apply") ----
 // `opportunities.link` remains the single primary "how to apply" link; this
 // table holds ADDITIONAL links per opportunity. Follows the same
-// public/admin split as reviews: getApprovedLinks() is the ONLY sanctioned
-// public read path (status is hardcoded to 'approved', not a
+// public/admin split as opportunities: getApprovedLinks() is the ONLY
+// sanctioned public read path (status is hardcoded to 'approved', not a
 // caller-controlled filter) and getLinksForAdmin()/mutation helpers are
 // admin-only.
 
@@ -918,7 +704,7 @@ export interface LinkDTO {
 // Public "propose a correction" flow scoped to a single field
 // (name|description|link|majors — enforced as a fixed allowlist at the
 // route layer, see backend/src/routes/public.ts) on an existing, publicly
-// visible opportunity. Same public/admin split as reviews/reports:
+// visible opportunity. Same public/admin split as elsewhere in this file:
 // insertSuggestedEdit() is the only sanctioned public write path, and it
 // reads the CURRENT field value server-side (never trusts a client-supplied
 // oldValue) so the admin queue can show an accurate before/after even if the
@@ -1101,7 +887,7 @@ export type InsertSuggestedEditResult =
 /**
  * Public submission path. Looks up the opportunity via getPublic() (must be
  * approved/publicly visible — same "404, don't leak pending/rejected rows"
- * convention as the reviews submission path) and reads the field's CURRENT
+ * convention used elsewhere) and reads the field's CURRENT
  * value server-side to populate `oldValue`. A submission whose `newValue`
  * exactly matches the current value is rejected as a no-op (the route turns
  * that into a 400) instead of creating a pointless pending row.
@@ -1164,7 +950,7 @@ async function getSuggestedEditById(id: number): Promise<typeof suggestedEdits.$
  * refreshSearchBlob() since name/description/majors all feed the search
  * index. The opportunities write + suggested_edits stamp happen in one
  * transaction; refreshSearchBlob runs after (mirrors updateOpportunity()'s
- * shape just above the Reviews section).
+ * shape above).
  */
 export async function approveSuggestedEdit(id: number, reviewedBy: string): Promise<SuggestedEditDTO | null> {
   const existing = await getSuggestedEditById(id);
@@ -1371,8 +1157,7 @@ export async function getPendingRequestsForOpportunity(opportunityId: number): P
  * ADMIN-ONLY (module 4 of 7): list access_requests across ALL opportunities
  * for the admin review queue, optionally filtered by status, joined against
  * opportunities so the queue can show the org's name/type without a second
- * per-row lookup — mirrors getSuggestedEditsForAdmin()'s shape just above the
- * Reviews section.
+ * per-row lookup — mirrors getSuggestedEditsForAdmin()'s shape above.
  */
 export async function getAccessRequestsForAdmin(
   filters: { status?: AccessRequestStatus } = {}

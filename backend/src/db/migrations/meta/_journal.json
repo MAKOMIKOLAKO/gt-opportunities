@@ -57,6 +57,13 @@
       "when": 1786243477864,
       "tag": "0007_add_leader_access_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786309238642,
+      "tag": "0008_drop_reviews_and_reports",
+      "breakpoints": true
     }
   ]
 }
