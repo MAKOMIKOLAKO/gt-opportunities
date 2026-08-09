@@ -1423,7 +1423,16 @@ function updateFilterChrome() {
 // (backend/src/routes/seo.ts's "open in interactive app" link, and the
 // WebSite/SearchAction JSON-LD on this page) land the SPA in the right
 // state instead of always starting at the bare directory:
-//   ?opportunity=<id> -> open that listing's detail view directly
+//   #opportunity=<id> -> open that listing's detail view directly. A URL
+//                        fragment, not a query string — seo.ts's CTA link
+//                        deliberately uses one so it can never collide with
+//                        seo.ts's GET / redirect route, which 301s the
+//                        *query-string* form (?opportunity=<id>, a legacy
+//                        address from before real /org/:slug routing
+//                        existed) to /org/:slug instead.
+//   ?opportunity=<id> -> same, kept only as a defensive fallback in case a
+//                        request ever reaches this code without having been
+//                        301'd server-side first (see seo.ts).
 //   ?search=<term>    -> pre-fill the search box (also what the
 //                        sitelinks-search-box JSON-LD's SearchAction targets)
 //   ?type=vip|lab|club -> pre-select a type filter
@@ -1474,6 +1483,12 @@ window.addEventListener("popstate", (e) => {
 });
 
 function applyDeepLinkFromUrl() {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const hashOpportunityId = Number(hashParams.get("opportunity"));
+  if (Number.isInteger(hashOpportunityId) && hashOpportunityId > 0) {
+    Object.assign(state, { view: "detail", selectedId: hashOpportunityId });
+    return;
+  }
   const params = new URLSearchParams(window.location.search);
   const opportunityId = Number(params.get("opportunity"));
   if (Number.isInteger(opportunityId) && opportunityId > 0) {
