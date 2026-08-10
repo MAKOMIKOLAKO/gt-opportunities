@@ -21,29 +21,31 @@
   --status-closed-bg: #F1F1F1;
   --status-closed-fg: #55585a;
 
-  /* Public directory/detail redesign (Club Aggregator mockup import) —
-     scoped to #app (see below). admin/admin.css lives under a separate
-     #admin-app root with its own tokens, so this doesn't touch it. */
-  --pub-bg: oklch(97% 0.015 60);
-  --pub-ink: oklch(22% 0.012 60);
-  --pub-ink-soft: oklch(40% 0.015 60);
-  --pub-muted: oklch(45% 0.01 60 / 0.6);
-  --pub-border: oklch(88% 0.01 60);
-  --pub-card-border: oklch(90% 0.01 60);
-  --pub-accent: oklch(58% 0.12 340);
-  --pub-accent-selection: oklch(88% 0.06 340);
-  --pub-eyebrow: oklch(58% 0.1 340);
+  /* Public directory/detail redesign — scoped to #app (see below).
+     admin/admin.css lives under a separate #admin-app root with its own
+     tokens, so this doesn't touch it. Pale/minimalist GT palette: mostly
+     near-white, navy as the one real accent (used sparingly), gold as a
+     hairline touch (eyebrows, selection) rather than a loud CTA color. */
+  --pub-bg: #FAFAF8;
+  --pub-ink: var(--ink);
+  --pub-ink-soft: var(--gray-matter);
+  --pub-muted: color-mix(in oklab, var(--gray-matter) 60%, transparent);
+  --pub-border: #E7E5DF;
+  --pub-card-border: #ECEAE4;
+  --pub-accent: var(--navy);
+  --pub-accent-selection: color-mix(in oklab, var(--gold) 35%, white);
+  --pub-eyebrow: var(--gold);
   --pub-serif: 'Source Serif 4', serif;
 
-  /* Per-type category colors, reused directly from the mockup's own
-     catColors/avatarBg maps (VIP -> its "Arts & Culture", Lab -> its
-     "Technology", Club -> its "Service"). */
-  --cat-vip: oklch(55% 0.1 340);
-  --cat-vip-bg: oklch(62% 0.11 340);
-  --cat-lab: oklch(50% 0.09 200);
-  --cat-lab-bg: oklch(55% 0.09 200);
-  --cat-club: oklch(52% 0.08 140);
-  --cat-club-bg: oklch(56% 0.09 140);
+  /* Per-type category colors — pale/muted tints of GT's own secondary
+     palette (gold/teal/purple) instead of solid saturated hues, so badges
+     read as quiet labels rather than loud UI chrome. */
+  --cat-vip: color-mix(in oklab, var(--gold) 65%, var(--ink) 15%);
+  --cat-vip-bg: color-mix(in oklab, var(--gold) 22%, white);
+  --cat-lab: color-mix(in oklab, var(--teal) 70%, var(--ink) 10%);
+  --cat-lab-bg: color-mix(in oklab, var(--teal) 16%, white);
+  --cat-club: color-mix(in oklab, var(--purple) 70%, var(--ink) 10%);
+  --cat-club-bg: color-mix(in oklab, var(--purple) 14%, white);
 }
 
 html, body {

@@ -4,14 +4,15 @@
 
 const API_BASE = "/api"; // same-origin; frontend/server.js proxies this to the backend
 
-// Per-type icon-background / label colors, reused directly from the
-// Club Aggregator mockup's own catColors/avatarBg maps (VIP -> its "Arts &
-// Culture" rose, Lab -> its "Technology" blue, Club -> its "Service"
-// green) — see the matching --cat-* custom properties in style.css.
+// Per-type icon-background / label colors. Reference the --cat-* custom
+// properties defined on :root in style.css (pale, GT-brand-derived tints
+// of gold/teal/purple) instead of hardcoding literals here, so this file
+// and style.css can't drift out of sync the way they did when this used
+// to hardcode the old rose/pink Club Aggregator mockup colors directly.
 const TYPE_META = {
-  vip: { label: "VIP Team", color: "oklch(62% 0.11 340)", catColor: "oklch(55% 0.1 340)" },
-  lab: { label: "Research Lab", color: "oklch(55% 0.09 200)", catColor: "oklch(50% 0.09 200)" },
-  club: { label: "Student Org", color: "oklch(56% 0.09 140)", catColor: "oklch(52% 0.08 140)" },
+  vip: { label: "VIP Team", color: "var(--cat-vip)", catColor: "var(--cat-vip)" },
+  lab: { label: "Research Lab", color: "var(--cat-lab)", catColor: "var(--cat-lab)" },
+  club: { label: "Student Org", color: "var(--cat-club)", catColor: "var(--cat-club)" },
 };
 
 const TYPE_FILTERS = [
@@ -256,8 +257,8 @@ function renderDirectory() {
     <main class="view-directory">
       <div class="dir-heading">
         <div class="dir-eyebrow">Georgia Institute of Technology</div>
-        <h1>Find your next project</h1>
-        <p>Search VIP teams, research labs, and technical student organizations in one place — no more digging through CampusGroups.</p>
+        <h1>Every technical opportunity at GT, searchable</h1>
+        <p>VIP teams, research labs, and student orgs.</p>
       </div>
 
       <div class="dir-toolbar">
